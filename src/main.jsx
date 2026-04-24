@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { supabase } from './lib/supabase.js';
 import Login from './auth/Login.jsx';
 import logo from './images/spattoo-green.png';
+import { getSignedUploadUrl, uploadToR2, createTemplate } from './lib/api.js';
 
 const CreateTemplate = lazy(() =>
   import('@spattoo/designer').then(m => ({ default: m.CreateTemplate }))
@@ -25,9 +26,29 @@ function Router() {
   const Screen = ROUTES[path];
 
   if (Screen) {
+    const extraProps = {};
+
+    if (path === '/templates/create') {
+      extraProps.onSave = async ({ name, tierCount, designJson, thumbnailBlob }) => {
+        let thumbnailKey = null;
+        if (thumbnailBlob) {
+          const filename = `${crypto.randomUUID()}.png`;
+          const { url, key } = await getSignedUploadUrl('templates/thumbnails', filename, 'image/png');
+          await uploadToR2(url, thumbnailBlob);
+          thumbnailKey = key;
+        }
+        await createTemplate({
+          name,
+          tier_count:   tierCount,
+          design:       designJson,
+          thumbnail_url: thumbnailKey,
+        });
+      };
+    }
+
     return (
       <Suspense fallback={FALLBACK}>
-        <Screen supabase={supabase} />
+        <Screen supabase={supabase} {...extraProps} />
       </Suspense>
     );
   }

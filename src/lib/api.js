@@ -50,3 +50,7 @@ export async function uploadToR2(signedUrl, file) {
 export async function createGlobalElement(payload) {
   return post('/api/admin/elements', payload);
 }
+
+export async function createTemplate(payload) {
+  return post('/api/admin/templates', payload);
+}
