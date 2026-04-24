@@ -8,11 +8,13 @@ import { getSignedUploadUrl, uploadToR2, createTemplate } from './lib/api.js';
 const CreateTemplate = lazy(() =>
   import('@spattoo/designer').then(m => ({ default: m.CreateTemplate }))
 );
-const AddElement = lazy(() => import('./admin/AddElement.jsx'));
+const AddElement    = lazy(() => import('./admin/AddElement.jsx'));
+const OnboardBaker  = lazy(() => import('./admin/OnboardBaker.jsx'));
 
 const ROUTES = {
   '/templates/create': CreateTemplate,
   '/elements/add':     AddElement,
+  '/bakers/onboard':   OnboardBaker,
 };
 
 const FALLBACK = (
@@ -69,6 +71,11 @@ function Router() {
           <li>
             <a href="/elements/add" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
               Add Element
+            </a>
+          </li>
+          <li>
+            <a href="/bakers/onboard" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
+              Onboard Baker
             </a>
           </li>
         </ul>

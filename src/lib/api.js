@@ -54,3 +54,7 @@ export async function createGlobalElement(payload) {
 export async function createTemplate(payload) {
   return post('/api/admin/templates', payload);
 }
+
+export async function createBaker(payload) {
+  return post('/api/admin/bakers', payload);
+}
