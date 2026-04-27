@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { createBaker } from '../lib/api.js';
+import { createBaker, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
 
 const TIERS = ['trial', 'starter', 'pro', 'enterprise'];
 
@@ -29,6 +29,7 @@ const EMPTY_FORM = {
 
 export default function OnboardBaker() {
   const [form, setForm] = useState(EMPTY_FORM);
+  const [logoFile, setLogoFile] = useState(null);
   const [slugManual, setSlugManual] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -54,6 +55,15 @@ export default function OnboardBaker() {
       if (baker.subscription_tier !== 'trial' || !baker.trial_ends_at) {
         delete baker.trial_ends_at;
       }
+
+      if (logoFile) {
+        const ext = logoFile.name.split('.').pop();
+        const filename = `${crypto.randomUUID()}.${ext}`;
+        const { url, key } = await getSignedUploadUrl('logos', filename, logoFile.type);
+        await uploadToR2(url, logoFile);
+        baker.logo_url = key;
+      }
+
       const data = await createBaker({
         ...baker,
         primaryUser: {
@@ -108,6 +118,7 @@ export default function OnboardBaker() {
           <button style={s.anotherBtn} onClick={() => {
             setResult(null);
             setForm(EMPTY_FORM);
+            setLogoFile(null);
             setSlugManual(false);
           }}>
             + Onboard another baker
@@ -272,6 +283,34 @@ export default function OnboardBaker() {
             </div>
           </div>
 
+          <label style={s.label}>Logo</label>
+          <label style={s.fileBox}>
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={e => setLogoFile(e.target.files[0] ?? null)}
+            />
+            {logoFile ? (
+              <img
+                src={URL.createObjectURL(logoFile)}
+                alt="logo preview"
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <span style={{ fontSize: 12, color: '#6B8C74' }}>Click to choose logo image</span>
+            )}
+          </label>
+          {logoFile && (
+            <button
+              type="button"
+              style={{ ...s.clearBtn, marginTop: 6 }}
+              onClick={() => setLogoFile(null)}
+            >
+              Remove
+            </button>
+          )}
+
           {/* ── Subscription ── */}
           <div style={{ ...s.sectionLabel, marginTop: 20 }}>Subscription</div>
 
@@ -374,6 +413,16 @@ const s = {
     background: '#E8EDE9', border: '1.5px solid #C5D4C8',
     borderRight: 'none', borderRadius: '8px 0 0 8px',
     padding: '9px 10px', fontSize: 13, color: '#6B8C74', fontWeight: 700,
+  },
+  fileBox: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    width: 120, height: 120, border: '1.5px dashed #C5D4C8', borderRadius: 10,
+    background: '#F4F8F5', cursor: 'pointer', overflow: 'hidden', flexShrink: 0,
+  },
+  clearBtn: {
+    padding: '5px 12px', border: '1.5px solid #C5D4C8', borderRadius: 6,
+    background: '#fff', color: '#6B8C74', fontSize: 11, fontWeight: 700,
+    cursor: 'pointer', fontFamily: 'Quicksand, sans-serif',
   },
   colorWrap:   { display: 'flex', alignItems: 'center', gap: 8 },
   colorSwatch: {

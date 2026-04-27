@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  appType: 'spa',
   resolve: {
     alias: {
       '@spattoo/designer': '/users/sandeep/dev/spattoo-core/src/index.js',

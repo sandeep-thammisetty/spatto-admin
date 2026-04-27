@@ -1,0 +1,376 @@
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { useThree } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
+import * as THREE from 'three';
+import { fetchAdminTemplates, createTemplate, updateTemplate, deleteTemplate, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
+
+const SHAPES = [
+  { value: 'round',      label: 'Round' },
+  { value: 'round_long', label: 'Round — Tall' },
+  { value: 'square',     label: 'Square' },
+  { value: 'rectangle',  label: 'Rectangle' },
+  { value: 'heart',      label: 'Heart' },
+  { value: 'hexagon',    label: 'Hexagon' },
+];
+
+const TIER_SCALES  = { 1: [1.0], 2: [1.0, 0.72], 3: [1.0, 0.72, 0.52] };
+const TIER_HEIGHT  = 0.7;
+const SHAPE_HEIGHT = { round_long: 1.3 };
+
+function shapeHeight(shape) { return SHAPE_HEIGHT[shape] ?? TIER_HEIGHT; }
+const TIER_GAP      = 0.04;
+const BOARD_HEIGHT  = 0.06;
+const CAKE_MATERIAL = new THREE.MeshStandardMaterial({ color: '#F5E6C8', roughness: 0.4,  metalness: 0 });
+const BOARD_MATERIAL= new THREE.MeshStandardMaterial({ color: '#C9A84C', roughness: 0.3,  metalness: 0.6 });
+
+function tierGeometry(shape, scale) {
+  const r = scale, h = shapeHeight(shape);
+  switch (shape) {
+    case 'round':
+    case 'round_long':
+      return new THREE.CylinderGeometry(r, r, h, 48);
+    case 'square':
+      return new THREE.BoxGeometry(r * 2, h, r * 2);
+    case 'rectangle':
+      return new THREE.BoxGeometry(r * 2.8, h, r * 2);
+    case 'hexagon':
+      return new THREE.CylinderGeometry(r, r, h, 6);
+    case 'heart': {
+      const a = r * 0.85;
+      const s = new THREE.Shape();
+      s.moveTo(0, a * 1.1);
+      s.bezierCurveTo( a * 1.6,  a * 1.1,  a * 1.6, -a * 0.3, 0, -a * 0.85);
+      s.bezierCurveTo(-a * 1.6, -a * 0.3, -a * 1.6,  a * 1.1, 0,  a * 1.1);
+      return new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2 });
+    }
+    default:
+      return new THREE.CylinderGeometry(r, r, h, 48);
+  }
+}
+
+function boardGeometry(shape, scale) {
+  const r = scale * 1.25, h = BOARD_HEIGHT;
+  switch (shape) {
+    case 'square':   return new THREE.BoxGeometry(r * 2, h, r * 2);
+    case 'rectangle':return new THREE.BoxGeometry(r * 2.8, h, r * 2);
+    default:         return new THREE.CylinderGeometry(r, r, h, 48);
+  }
+}
+
+function CakeTier({ shape, scale, yCenter }) {
+  const geo = useMemo(() => tierGeometry(shape, scale), [shape, scale]);
+  const isHeart = shape === 'heart';
+  const h = shapeHeight(shape);
+  return (
+    <mesh
+      geometry={geo}
+      material={CAKE_MATERIAL}
+      position={isHeart ? [0, yCenter + h / 2, 0] : [0, yCenter, 0]}
+      rotation={isHeart ? [-Math.PI / 2, 0, 0] : [0, 0, 0]}
+    />
+  );
+}
+
+function CakeScene({ shape, tierCount, onReady }) {
+  const groupRef = useRef();
+  const { camera, controls } = useThree();
+  const scales = TIER_SCALES[tierCount];
+
+  const h = shapeHeight(shape);
+  // Compute y-center for each tier stacked from bottom
+  const tiers = scales.map((scale, i) => {
+    const yBottom = BOARD_HEIGHT + i * (h + TIER_GAP);
+    return { scale, yCenter: yBottom + h / 2 };
+  });
+
+  const boardGeo = useMemo(() => boardGeometry(shape, scales[0]), [shape, scales[0]]);
+
+  useEffect(() => {
+    if (!groupRef.current) return;
+    const box    = new THREE.Box3().setFromObject(groupRef.current);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const dist   = maxDim / (2 * Math.tan((camera.fov * Math.PI) / 360)) * 1.15;
+
+    // Elevated angle — looking from above-right so top surface is visible
+    camera.position.set(center.x + dist * 0.3, center.y + dist * 0.7, center.z + dist);
+    camera.near = dist / 100;
+    camera.far  = dist * 100;
+    camera.lookAt(center);
+    camera.updateProjectionMatrix();
+
+    if (controls) { controls.target.copy(center); controls.update(); }
+
+    const t = setTimeout(onReady, 600);
+    return () => clearTimeout(t);
+  }, [shape, tierCount]);
+
+  return (
+    <group ref={groupRef}>
+      <mesh geometry={boardGeo} material={BOARD_MATERIAL} position={[0, BOARD_HEIGHT / 2, 0]} />
+      {tiers.map((tier, i) => (
+        <CakeTier key={i} shape={shape} scale={tier.scale} yCenter={tier.yCenter} />
+      ))}
+    </group>
+  );
+}
+
+function CakePreview({ shape, tierCount, canvasRef, onCapture }) {
+  return (
+    <div ref={canvasRef} style={{ width: '100%', height: 300, borderRadius: 10, overflow: 'hidden', border: '1.5px solid #C5D4C8', background: '#f7f9f7' }}>
+      <Canvas flat gl={{ preserveDrawingBuffer: true }} camera={{ fov: 45 }}>
+        <ambientLight intensity={1} />
+        <directionalLight position={[3, 5, 3]} intensity={0.7} />
+        <directionalLight position={[-3, 2, -2]} intensity={0.3} />
+        <CakeScene shape={shape} tierCount={tierCount} onReady={onCapture} />
+        <OrbitControls enablePan={false} />
+      </Canvas>
+    </div>
+  );
+}
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+const s = {
+  page:  { minHeight: '100vh', background: '#EDEAE2', fontFamily: "'Quicksand', sans-serif", padding: '40px 0' },
+  inner: { maxWidth: 860, margin: '0 auto', padding: '0 24px' },
+  header:{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 },
+  title: { fontSize: 20, fontWeight: 800, color: '#2C4433' },
+  btn: (v = 'primary') => ({
+    padding: v === 'primary' ? '10px 22px' : '7px 16px',
+    borderRadius: 10, cursor: 'pointer', border: 'none',
+    fontSize: 13, fontWeight: 700, fontFamily: "'Quicksand', sans-serif",
+    background: v === 'primary' ? '#3D5A44' : '#E8EDE9',
+    color: v === 'primary' ? '#fff' : '#3D5A44',
+  }),
+  card:    { background: '#fff', borderRadius: 16, border: '1.5px solid #C5D4C8', padding: 24, marginBottom: 14 },
+  formCard:{ background: '#fff', borderRadius: 16, border: '1.5px solid #3D5A44', padding: 28, marginBottom: 28 },
+  grid:    { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 },
+  field:   { marginBottom: 16 },
+  label:   { display: 'block', fontSize: 11, fontWeight: 700, color: '#3D5A44', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6 },
+  input:   { width: '100%', padding: '9px 12px', border: '1.5px solid #C5D4C8', borderRadius: 8, fontSize: 13, fontFamily: "'Quicksand', sans-serif", color: '#2C4433', outline: 'none', boxSizing: 'border-box' },
+  radioRow:{ display: 'flex', gap: 8 },
+  radioBtn:(active) => ({ flex: 1, padding: '7px 0', borderRadius: 8, cursor: 'pointer', border: `1.5px solid ${active ? '#3D5A44' : '#C5D4C8'}`, background: active ? '#E8EDE9' : '#fff', color: active ? '#2C4433' : '#6B8C74', fontSize: 13, fontWeight: 700, fontFamily: "'Quicksand', sans-serif" }),
+  msg:     (ok) => ({ fontSize: 13, fontWeight: 600, color: ok ? '#3D5A44' : '#c00', marginTop: 12 }),
+  thumb:   { width: 56, height: 56, borderRadius: 8, objectFit: 'cover', border: '1.5px solid #C5D4C8', background: '#f7f9f7', flexShrink: 0 },
+  badge:   (color) => ({ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: color === 'green' ? '#E8EDE9' : color === 'red' ? '#fdecea' : '#f0f0f0', color: color === 'green' ? '#3D5A44' : color === 'red' ? '#c00' : '#888', letterSpacing: 0.5, textTransform: 'uppercase' }),
+};
+
+// ─── Form ─────────────────────────────────────────────────────────────────────
+
+function TemplateForm({ onSaved, onCancel }) {
+  const [name, setName]               = useState('');
+  const [shape, setShape]             = useState('round');
+  const [tierCount, setTierCount]     = useState(1);
+  const [thumbBlob, setThumbBlob]     = useState(null);
+  const [saving, setSaving]           = useState(false);
+  const [msg, setMsg]                 = useState(null);
+  const canvasRef                     = useRef();
+
+  // Reset thumbnail when shape or tier count changes so it re-captures
+  useEffect(() => setThumbBlob(null), [shape, tierCount]);
+
+  function captureThumb() {
+    const canvas = canvasRef.current?.querySelector('canvas');
+    if (!canvas) return;
+    canvas.toBlob(blob => { if (blob) setThumbBlob(blob); }, 'image/png');
+  }
+
+  async function handleSave() {
+    if (!name.trim()) { setMsg({ ok: false, text: 'Name is required.' }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      let thumbnailKey = null;
+      if (thumbBlob) {
+        const filename = `${crypto.randomUUID()}.png`;
+        const { url, key } = await getSignedUploadUrl('templates/thumbnails', filename, 'image/png');
+        await uploadToR2(url, thumbBlob);
+        thumbnailKey = key;
+      }
+      await createTemplate({
+        name:          name.trim(),
+        shape,
+        tier_count:    tierCount,
+        type:          'basic',
+        design:        {
+          tiers: TIER_SCALES[tierCount].map((scale, i) => ({
+            index:  i,
+            scale,
+            shape,
+            height: shapeHeight(shape),
+            color:  '#FFFFFF',
+          })),
+          elements: [],
+          text_slots: [{ id: 'main_text', label: 'Message', value: '', zone: 'top_surface', tier_index: tierCount - 1 }],
+        },
+        thumbnail_url: thumbnailKey,
+        sort_order:    0,
+      });
+      setMsg({ ok: true, text: 'Template created!' });
+      setTimeout(onSaved, 700);
+    } catch (err) {
+      setMsg({ ok: false, text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={s.formCard}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: '#2C4433', marginBottom: 20 }}>New Basic Template</div>
+
+      <div style={s.grid}>
+        <div style={s.field}>
+          <label style={s.label}>Name</label>
+          <input style={s.input} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Single Tier Round" />
+        </div>
+        <div style={s.field}>
+          <label style={s.label}>Shape</label>
+          <div style={{ ...s.radioRow, flexWrap: 'wrap' }}>
+            {SHAPES.map(sh => (
+              <button key={sh.value} style={{ ...s.radioBtn(shape === sh.value), flex: 'none', padding: '6px 14px' }} onClick={() => setShape(sh.value)}>
+                {sh.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ ...s.field, marginBottom: 20 }}>
+        <label style={s.label}>Tiers</label>
+        <div style={s.radioRow}>
+          {[1, 2, 3].map(n => (
+            <button key={n} style={s.radioBtn(tierCount === n)} onClick={() => setTierCount(n)}>
+              {n} Tier{n > 1 ? 's' : ''}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={s.field}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <label style={{ ...s.label, marginBottom: 0 }}>Preview & Thumbnail</label>
+          <button style={s.btn('secondary')} onClick={captureThumb}>Re-capture</button>
+        </div>
+        <CakePreview shape={shape} tierCount={tierCount} canvasRef={canvasRef} onCapture={captureThumb} />
+        {thumbBlob && (
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src={URL.createObjectURL(thumbBlob)} style={{ ...s.thumb, width: 48, height: 48 }} alt="thumbnail" />
+            <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600 }}>Thumbnail captured</span>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <button style={{ ...s.btn('primary'), opacity: saving ? 0.6 : 1 }} onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save Template'}
+        </button>
+        <button style={s.btn('secondary')} onClick={onCancel}>Cancel</button>
+      </div>
+      {msg && <div style={s.msg(msg.ok)}>{msg.text}</div>}
+    </div>
+  );
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function ManageTemplates() {
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [showForm, setShowForm]   = useState(false);
+  const [msg, setMsg]             = useState(null);
+
+  async function load() {
+    setLoading(true);
+    try   { setTemplates(await fetchAdminTemplates()); }
+    catch (err) { setMsg({ ok: false, text: err.message }); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function toggleActive(t) {
+    try {
+      await updateTemplate(t.id, { is_active: !t.is_active });
+      setTemplates(prev => prev.map(x => x.id === t.id ? { ...x, is_active: !x.is_active } : x));
+    } catch (err) {
+      setMsg({ ok: false, text: err.message });
+    }
+  }
+
+  async function handleDelete(t) {
+    if (!window.confirm(`Delete "${t.name}"? This cannot be undone.`)) return;
+    try {
+      await deleteTemplate(t.id);
+      setTemplates(prev => prev.filter(x => x.id !== t.id));
+    } catch (err) {
+      setMsg({ ok: false, text: err.message });
+    }
+  }
+
+  return (
+    <>
+      <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700;800&display=swap" rel="stylesheet" />
+      <div style={s.page}>
+        <div style={s.inner}>
+          <div style={s.header}>
+            <div style={s.title}>Cake Templates</div>
+            {!showForm && (
+              <button style={s.btn('primary')} onClick={() => setShowForm(true)}>+ New Basic Template</button>
+            )}
+          </div>
+
+          {showForm && (
+            <TemplateForm
+              onSaved={() => { setShowForm(false); load(); }}
+              onCancel={() => setShowForm(false)}
+            />
+          )}
+
+          {msg && <div style={s.msg(msg.ok)}>{msg.text}</div>}
+
+          {loading ? (
+            <div style={{ color: '#6B8C74', fontSize: 13 }}>Loading…</div>
+          ) : templates.length === 0 ? (
+            <div style={{ ...s.card, color: '#6B8C74', fontSize: 13 }}>No templates yet. Create your first one.</div>
+          ) : (
+            templates.map(t => (
+              <div key={t.id} style={s.card}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                  <div style={{ ...s.thumb, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {t.thumbnail_url
+                      ? <img src={t.thumbnail_url} alt={t.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }} />
+                      : <span style={{ fontSize: 9, color: '#C5D4C8' }}>No thumb</span>
+                    }
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, color: '#2C4433', marginBottom: 5 }}>{t.name}</div>
+                    <div style={{ fontSize: 12, color: '#6B8C74', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <span>{t.shape}</span>
+                      <span>{t.tier_count} tier{t.tier_count > 1 ? 's' : ''}</span>
+                      <span style={s.badge('green')}>{t.type}</span>
+                      <span style={s.badge(t.is_active ? 'green' : 'red')}>{t.is_active ? 'Active' : 'Inactive'}</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button style={s.btn('secondary')} onClick={() => toggleActive(t)}>
+                      {t.is_active ? 'Deactivate' : 'Activate'}
+                    </button>
+                    <button
+                      style={{ ...s.btn('secondary'), color: '#c00', background: '#fdecea' }}
+                      onClick={() => handleDelete(t)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
