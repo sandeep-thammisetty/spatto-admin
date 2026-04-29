@@ -11,9 +11,11 @@ const CreateTemplate = lazy(() =>
 const AddElement       = lazy(() => import('./admin/AddElement.jsx'));
 const OnboardBaker     = lazy(() => import('./admin/OnboardBaker.jsx'));
 const ManageTemplates  = lazy(() => import('./admin/ManageTemplates.jsx'));
+const DesignTemplate   = lazy(() => import('./admin/DesignTemplate.jsx'));
 
 const ROUTES = {
   '/templates/create': CreateTemplate,
+  '/templates/design': DesignTemplate,
   '/templates':        ManageTemplates,
   '/elements/add':     AddElement,
   '/bakers/onboard':   OnboardBaker,
@@ -68,6 +70,11 @@ function Router() {
           <li>
             <a href="/templates" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
               Manage Templates
+            </a>
+          </li>
+          <li>
+            <a href="/templates/design" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
+              Design Template
             </a>
           </li>
           <li>

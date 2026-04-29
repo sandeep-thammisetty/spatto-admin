@@ -103,3 +103,7 @@ export async function updateTemplate(id, payload) {
 export async function createBaker(payload) {
   return post('/api/admin/bakers', payload);
 }
+
+export async function fetchAdminBakers() {
+  return get('/api/admin/bakers');
+}

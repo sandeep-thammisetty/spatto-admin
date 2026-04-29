@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useThree } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { fetchAdminTemplates, createTemplate, updateTemplate, deleteTemplate, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
 
@@ -58,21 +58,31 @@ function boardGeometry(shape, scale) {
   }
 }
 
-function CakeTier({ shape, scale, yCenter }) {
-  const geo = useMemo(() => tierGeometry(shape, scale), [shape, scale]);
+function CakeTier({ shape, scale, yCenter, color }) {
+  const geo    = useMemo(() => tierGeometry(shape, scale), [shape, scale]);
   const isHeart = shape === 'heart';
-  const h = shapeHeight(shape);
+  const h       = shapeHeight(shape);
+  const topY    = isHeart ? yCenter + h : yCenter + h / 2;
+  const col     = color || '#F5E6C8';
   return (
-    <mesh
-      geometry={geo}
-      material={CAKE_MATERIAL}
+    <group
       position={isHeart ? [0, yCenter + h / 2, 0] : [0, yCenter, 0]}
       rotation={isHeart ? [-Math.PI / 2, 0, 0] : [0, 0, 0]}
-    />
+    >
+      <mesh geometry={geo} castShadow receiveShadow>
+        <meshStandardMaterial color={col} roughness={0.68} metalness={0} />
+      </mesh>
+      {!isHeart && (
+        <mesh position={[0, h / 2 + 0.01, 0]} castShadow>
+          <cylinderGeometry args={[scale - 0.01, scale - 0.01, 0.02, 48]} />
+          <meshStandardMaterial color={col} roughness={0.60} metalness={0} />
+        </mesh>
+      )}
+    </group>
   );
 }
 
-function CakeScene({ shape, tierCount, onReady }) {
+function CakeScene({ shape, tierCount, tierColors, onReady }) {
   const groupRef = useRef();
   const { camera, controls } = useThree();
   const scales = TIER_SCALES[tierCount];
@@ -111,20 +121,22 @@ function CakeScene({ shape, tierCount, onReady }) {
     <group ref={groupRef}>
       <mesh geometry={boardGeo} material={BOARD_MATERIAL} position={[0, BOARD_HEIGHT / 2, 0]} />
       {tiers.map((tier, i) => (
-        <CakeTier key={i} shape={shape} scale={tier.scale} yCenter={tier.yCenter} />
+        <CakeTier key={i} shape={shape} scale={tier.scale} yCenter={tier.yCenter} color={tierColors?.[i]} />
       ))}
     </group>
   );
 }
 
-function CakePreview({ shape, tierCount, canvasRef, onCapture }) {
+function CakePreview({ shape, tierCount, tierColors, canvasRef, onCapture }) {
   return (
-    <div ref={canvasRef} style={{ width: '100%', height: 300, borderRadius: 10, overflow: 'hidden', border: '1.5px solid #C5D4C8', background: '#f7f9f7' }}>
-      <Canvas flat gl={{ preserveDrawingBuffer: true }} camera={{ fov: 45 }}>
-        <ambientLight intensity={1} />
-        <directionalLight position={[3, 5, 3]} intensity={0.7} />
-        <directionalLight position={[-3, 2, -2]} intensity={0.3} />
-        <CakeScene shape={shape} tierCount={tierCount} onReady={onCapture} />
+    <div ref={canvasRef} style={{ width: '100%', height: 300, borderRadius: 10, overflow: 'hidden', border: '1.5px solid #C5D4C8', background: '#f4f4f5' }}>
+      <Canvas gl={{ preserveDrawingBuffer: true }} camera={{ fov: 45 }}>
+        <color attach="background" args={['#f4f4f5']} />
+        <ambientLight intensity={0.8} />
+        <directionalLight position={[6, 14, 8]} intensity={1.5} castShadow />
+        <directionalLight position={[-4, 4, -4]} intensity={0.4} />
+        <Environment preset="apartment" backgroundBlurriness={1} />
+        <CakeScene shape={shape} tierCount={tierCount} tierColors={tierColors} onReady={onCapture} />
         <OrbitControls enablePan={false} />
       </Canvas>
     </div>
@@ -160,17 +172,46 @@ const s = {
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
+const DEFAULT_TIER_COLOR = '#fefbea';
+
 function TemplateForm({ onSaved, onCancel }) {
   const [name, setName]               = useState('');
   const [shape, setShape]             = useState('round');
   const [tierCount, setTierCount]     = useState(1);
+  const [tierColors, setTierColors]   = useState([DEFAULT_TIER_COLOR]);
   const [thumbBlob, setThumbBlob]     = useState(null);
+  const [capturing, setCapturing]     = useState(false);
   const [saving, setSaving]           = useState(false);
   const [msg, setMsg]                 = useState(null);
   const canvasRef                     = useRef();
 
-  // Reset thumbnail when shape or tier count changes so it re-captures
+  // Keep tierColors length in sync with tierCount
+  useEffect(() => {
+    setTierColors(prev => {
+      const next = Array.from({ length: tierCount }, (_, i) => prev[i] ?? DEFAULT_TIER_COLOR);
+      return next;
+    });
+  }, [tierCount]);
+
+  // Reset thumbnail only when cake structure changes (shape/tier count)
   useEffect(() => setThumbBlob(null), [shape, tierCount]);
+
+  // Re-capture after color changes (canvas updates live, just need a short settle delay)
+  useEffect(() => {
+    setCapturing(true);
+    const t = setTimeout(() => {
+      const canvas = canvasRef.current?.querySelector('canvas');
+      if (canvas) {
+        canvas.toBlob(blob => {
+          if (blob) setThumbBlob(blob);
+          setCapturing(false);
+        }, 'image/png');
+      } else {
+        setCapturing(false);
+      }
+    }, 300);
+    return () => { clearTimeout(t); setCapturing(false); };
+  }, [tierColors]);
 
   function captureThumb() {
     const canvas = canvasRef.current?.querySelector('canvas');
@@ -195,13 +236,21 @@ function TemplateForm({ onSaved, onCancel }) {
         tier_count:    tierCount,
         type:          'basic',
         design:        {
-          tiers: TIER_SCALES[tierCount].map((scale, i) => ({
-            index:  i,
-            scale,
-            shape,
-            height: shapeHeight(shape),
-            color:  '#FFFFFF',
-          })),
+          tiers: TIER_SCALES[tierCount].map((scale, i) => {
+            const h = shapeHeight(shape);
+            const dims = shape === 'rectangle'
+              ? { width: +(scale * 2.8).toFixed(4), depth: +(scale * 2).toFixed(4) }
+              : { width: +(scale * 2).toFixed(4), depth: +(scale * 2).toFixed(4) };
+            return {
+              index:  i,
+              scale,
+              shape,
+              height: h,
+              radius: scale,
+              ...dims,
+              color:  tierColors[i] ?? DEFAULT_TIER_COLOR,
+            };
+          }),
           elements: [],
           text_slots: [{ id: 'main_text', label: 'Message', value: '', zone: 'top_surface', tier_index: tierCount - 1 }],
         },
@@ -238,14 +287,34 @@ function TemplateForm({ onSaved, onCancel }) {
         </div>
       </div>
 
-      <div style={{ ...s.field, marginBottom: 20 }}>
-        <label style={s.label}>Tiers</label>
-        <div style={s.radioRow}>
-          {[1, 2, 3].map(n => (
-            <button key={n} style={s.radioBtn(tierCount === n)} onClick={() => setTierCount(n)}>
-              {n} Tier{n > 1 ? 's' : ''}
-            </button>
-          ))}
+      <div style={s.grid}>
+        <div style={{ ...s.field, marginBottom: 20 }}>
+          <label style={s.label}>Tiers</label>
+          <div style={s.radioRow}>
+            {[1, 2, 3].map(n => (
+              <button key={n} style={s.radioBtn(tierCount === n)} onClick={() => setTierCount(n)}>
+                {n} Tier{n > 1 ? 's' : ''}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ ...s.field, marginBottom: 20 }}>
+          <label style={s.label}>Tier Colors</label>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {tierColors.map((color, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <input
+                  type="color"
+                  value={color}
+                  onChange={e => { const v = e.target.value; setTierColors(prev => prev.map((c, j) => j === i ? v : c)); }}
+                  style={{ width: 36, height: 36, padding: 2, border: '1.5px solid #C5D4C8', borderRadius: 8, cursor: 'pointer', background: 'none' }}
+                />
+                <span style={{ fontSize: 10, color: '#6B8C74', fontWeight: 600 }}>T{i + 1}</span>
+                <span style={{ fontSize: 9, color: '#999', fontFamily: 'monospace' }}>{color}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -254,13 +323,21 @@ function TemplateForm({ onSaved, onCancel }) {
           <label style={{ ...s.label, marginBottom: 0 }}>Preview & Thumbnail</label>
           <button style={s.btn('secondary')} onClick={captureThumb}>Re-capture</button>
         </div>
-        <CakePreview shape={shape} tierCount={tierCount} canvasRef={canvasRef} onCapture={captureThumb} />
-        {thumbBlob && (
-          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src={URL.createObjectURL(thumbBlob)} style={{ ...s.thumb, width: 48, height: 48 }} alt="thumbnail" />
-            <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600 }}>Thumbnail captured</span>
-          </div>
-        )}
+        <CakePreview shape={shape} tierCount={tierCount} tierColors={tierColors} canvasRef={canvasRef} onCapture={captureThumb} />
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10, minHeight: 28 }}>
+          {capturing ? (
+            <>
+              <div style={{ width: 18, height: 18, border: '2.5px solid #C5D4C8', borderTopColor: '#3D5A44', borderRadius: '50%', animation: 'spin 0.7s linear infinite', flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600 }}>Capturing…</span>
+            </>
+          ) : thumbBlob ? (
+            <>
+              <img src={URL.createObjectURL(thumbBlob)} style={{ ...s.thumb, width: 48, height: 48 }} alt="thumbnail" />
+              <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600 }}>Thumbnail captured</span>
+            </>
+          ) : null}
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
 
       <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
