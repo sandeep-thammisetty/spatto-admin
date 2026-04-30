@@ -52,6 +52,24 @@ export async function fetchElementTypes() {
   return get('/api/element-types');
 }
 
+export async function fetchAdminElementTypes() {
+  return get('/api/admin/element-types');
+}
+
+export async function createElementType(payload) {
+  return post('/api/admin/element-types', payload);
+}
+
+export async function updateElementType(id, payload) {
+  const res = await fetch(`${BASE_URL}/api/admin/element-types/${id}`, {
+    method: 'PATCH',
+    headers: await authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
 export async function fetchParentElements(elementTypeId) {
   return get(`/api/elements?parents_only=true&element_type_id=${elementTypeId}`);
 }

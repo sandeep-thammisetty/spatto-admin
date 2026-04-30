@@ -12,13 +12,17 @@ const AddElement       = lazy(() => import('./admin/AddElement.jsx'));
 const OnboardBaker     = lazy(() => import('./admin/OnboardBaker.jsx'));
 const ManageTemplates  = lazy(() => import('./admin/ManageTemplates.jsx'));
 const DesignTemplate   = lazy(() => import('./admin/DesignTemplate.jsx'));
+const GenerateShape    = lazy(() => import('./admin/GenerateShape.jsx'));
+const ElementTypes     = lazy(() => import('./admin/ElementTypes.jsx'));
 
 const ROUTES = {
-  '/templates/create': CreateTemplate,
-  '/templates/design': DesignTemplate,
-  '/templates':        ManageTemplates,
-  '/elements/add':     AddElement,
-  '/bakers/onboard':   OnboardBaker,
+  '/templates/create':    CreateTemplate,
+  '/templates/design':    DesignTemplate,
+  '/templates':           ManageTemplates,
+  '/elements/add':        AddElement,
+  '/elements/generate':   GenerateShape,
+  '/elements/types':      ElementTypes,
+  '/bakers/onboard':      OnboardBaker,
 };
 
 const FALLBACK = (
@@ -80,6 +84,16 @@ function Router() {
           <li>
             <a href="/elements/add" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
               Add Element
+            </a>
+          </li>
+          <li>
+            <a href="/elements/generate" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
+              Generate Shape
+            </a>
+          </li>
+          <li>
+            <a href="/elements/types" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
+              Element Types
             </a>
           </li>
           <li>

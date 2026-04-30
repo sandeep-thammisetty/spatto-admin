@@ -226,6 +226,7 @@ export default function AddElement() {
   const [glbHasTexture, setGlbHasTexture] = useState(null);
   const [assetFile, setAssetFile]         = useState(null);
   const [thumbnailBlob, setThumbnailBlob] = useState(null);
+  const [capabilities, setCapabilities]   = useState({ resize: true, color: false, delete: true });
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
   const [msg, setMsg]                     = useState(null);
@@ -322,6 +323,7 @@ export default function AddElement() {
         image_url:        assetKey,
         thumbnail_url:    thumbKey,
         allowed_zones:    applicableZones,
+        allowed_actions:  capabilities,
         default_color:    assetType === '3D' ? elementColor : null,
         sort_order:       0,
       });
@@ -335,6 +337,7 @@ export default function AddElement() {
       setAssetFile(null);
       setElementColor('#F0DEB8');
       setThumbnailBlob(null);
+      setCapabilities({ resize: true, color: false, delete: true });
     } catch (err) {
       setMsg({ ok: false, text: err.message });
     } finally {
@@ -475,6 +478,30 @@ export default function AddElement() {
                 {thumbnailBlob ? 'Replace thumbnail…' : 'Upload custom thumbnail…'}
               </span>
             </label>
+          </div>
+
+          <div style={s.field}>
+            <label style={s.label}>Capabilities</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+              {[
+                { key: 'resize', label: 'Resizable',      hint: 'Drag handle to resize on canvas' },
+                { key: 'color',  label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
+                { key: 'delete', label: 'Deletable',       hint: 'Remove button shown when selected' },
+              ].map(({ key, label, hint }) => (
+                <label key={key} style={{ ...s.checkRow, alignItems: 'flex-start', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    style={{ ...s.checkbox, marginTop: 1 }}
+                    checked={capabilities[key]}
+                    onChange={e => setCapabilities(c => ({ ...c, [key]: e.target.checked }))}
+                  />
+                  <div>
+                    <div style={s.checkLabel}>{label}</div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>{hint}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
 
           <button
