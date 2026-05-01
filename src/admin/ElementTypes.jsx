@@ -29,20 +29,26 @@ function Toggle({ on, onChange }) {
 }
 
 function PlacementGrid({ rules, onChange }) {
+  const activeZones = rules.zones ?? [];
+
   function toggleZone(z) {
-    const next = { ...rules };
-    if (next[z]) { delete next[z]; } else { next[z] = 'stand'; }
-    onChange(next);
+    const isActive = activeZones.includes(z);
+    const newZones = isActive ? activeZones.filter(x => x !== z) : [...activeZones, z];
+    const newPlacement = { ...rules.placement };
+    if (isActive) { delete newPlacement[z]; } else { newPlacement[z] = 'stand'; }
+    onChange({ ...rules, zones: newZones, placement: newPlacement });
   }
 
-  const selectedZones = ZONES.filter(z => rules[z]);
+  function setMode(z, mode) {
+    onChange({ ...rules, placement: { ...rules.placement, [z]: mode } });
+  }
 
   return (
     <div>
       {/* Step 1 — zone chips */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 12 }}>
         {ZONES.map(z => {
-          const active = !!rules[z];
+          const active = activeZones.includes(z);
           return (
             <button key={z} type="button" onClick={() => toggleZone(z)} style={{
               padding: '6px 14px', borderRadius: 20, cursor: 'pointer',
@@ -58,10 +64,10 @@ function PlacementGrid({ rules, onChange }) {
       </div>
 
       {/* Step 2 — hug / stand per selected zone */}
-      {selectedZones.length > 0 && (
+      {activeZones.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          {selectedZones.map(z => {
-            const current = rules[z];
+          {activeZones.map(z => {
+            const current = rules.placement?.[z] ?? 'stand';
             return (
               <div key={z} style={{ background: '#F4F8F5', borderRadius: 8, padding: '10px 12px' }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
@@ -69,7 +75,7 @@ function PlacementGrid({ rules, onChange }) {
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {MODES.map(mode => (
-                    <button key={mode} type="button" onClick={() => onChange({ ...rules, [z]: mode })} style={{
+                    <button key={mode} type="button" onClick={() => setMode(z, mode)} style={{
                       flex: 1, padding: '5px 0', borderRadius: 6, border: 'none', cursor: 'pointer',
                       fontFamily: 'Quicksand, sans-serif', fontSize: 12, fontWeight: 700,
                       background: current === mode ? '#3D5A44' : '#E8EDE9',
@@ -89,15 +95,15 @@ function PlacementGrid({ rules, onChange }) {
 }
 
 function PlacementSummary({ rules }) {
-  if (!rules || !Object.keys(rules).length) return <span style={{ color: '#C5D4C8' }}>—</span>;
+  const zones = rules?.zones ?? [];
+  if (!zones.length) return <span style={{ color: '#C5D4C8' }}>—</span>;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-      {ZONES.map(z => {
-        const mode = rules[z];
-        if (!mode) return null;
+      {zones.map(z => {
+        const mode = rules.placement?.[z];
         return (
           <span key={z} style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: mode === 'hug' ? '#E8F5E9' : '#F4F8F5', color: mode === 'hug' ? '#2E7D32' : '#6B8C74' }}>
-            {z.replace(/_/g, ' ')}: {mode}
+            {z.replace(/_/g, ' ')}{mode ? `: ${mode}` : ''}
           </span>
         );
       })}
@@ -112,7 +118,7 @@ export default function ElementTypes() {
   const [name, setName]               = useState('');
   const [slug, setSlug]               = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
-  const [placementRules, setPlacementRules] = useState({});
+  const [placementRules, setPlacementRules] = useState({ zones: [], placement: {} });
   const [description, setDescription]       = useState('');
   const [saving, setSaving]           = useState(false);
   const [msg, setMsg]                 = useState(null);
@@ -132,7 +138,7 @@ export default function ElementTypes() {
   }
 
   function resetForm() {
-    setName(''); setSlug(''); setSlugTouched(false); setDescription(''); setPlacementRules({});
+    setName(''); setSlug(''); setSlugTouched(false); setDescription(''); setPlacementRules({ zones: [], placement: {} });
   }
 
   async function handleCreate(e) {

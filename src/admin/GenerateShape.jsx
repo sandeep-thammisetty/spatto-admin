@@ -390,7 +390,7 @@ export default function GenerateShape() {
     const rules = type?.placement_rules ?? {};
     setPlacementConfig(prev => {
       const next = {};
-      zones.forEach(z => { next[z] = prev[z] ?? rules[z] ?? 'stand'; });
+      zones.forEach(z => { next[z] = prev[z] ?? rules.placement?.[z] ?? 'stand'; });
       return next;
     });
   }, [elementTypeId, elementTypes]);
@@ -401,7 +401,7 @@ export default function GenerateShape() {
       // Add default for newly added zone
       if (!prev.includes(z)) {
         const type = elementTypes.find(t => t.id === elementTypeId);
-        const defaultMode = type?.placement_rules?.[z] ?? 'stand';
+        const defaultMode = type?.placement_rules?.placement?.[z] ?? 'stand';
         setPlacementConfig(pc => ({ ...pc, [z]: defaultMode }));
       }
       return next;
