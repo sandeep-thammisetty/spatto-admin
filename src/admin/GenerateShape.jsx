@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { fetchElementTypes, getSignedUploadUrl, uploadToR2, createGlobalElement, removeBg } from '../lib/api.js';
@@ -23,15 +23,19 @@ const SHAPES_2D = [
 ];
 
 const SHAPES_3D = [
-  { id: 'sphere',   label: 'Sphere' },
-  { id: 'star3d',   label: 'Star' },
-  { id: 'heart3d',  label: 'Heart' },
-  { id: 'cylinder', label: 'Cylinder' },
-  { id: 'cone',     label: 'Cone' },
-  { id: 'torus',    label: 'Ring / Torus' },
-  { id: 'cube',     label: 'Cube' },
-  { id: 'hexprism', label: 'Hex Prism' },
+  { id: 'sphere',    label: 'Sphere' },
+  { id: 'fauxball3d', label: 'Faux Ball' },
+  { id: 'star3d',    label: 'Star' },
+  { id: 'heart3d',   label: 'Heart' },
+  { id: 'cone',      label: 'Cone' },
+  { id: 'torus',     label: 'Ring / Torus' },
+  { id: 'cube',      label: 'Cube' },
 ];
+
+// Per-shape material presets applied when the shape is selected
+const SHAPE_3D_PRESETS = {
+  fauxball3d: { color: '#D4A843', roughness: 0.12, metalness: 0.96 },
+};
 
 const ZONES = ['top_surface', 'side', 'middle_tier', 'board'];
 
@@ -52,6 +56,7 @@ function lighten(hex, amount = 0.45) {
   const m = v => Math.round(v + (255 - v) * amount);
   return `rgb(${m(r)},${m(g)},${m(b)})`;
 }
+
 
 function render2DShape(ctx, shapeId, color, color2) {
   ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
@@ -207,6 +212,13 @@ function makeHeartShape3D() {
 
 const BEVEL = { depth: 0.45, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.05, bevelSegments: 4 };
 
+// Faux ball dimensions — ball sits on stick, whole group centered vertically
+const FB_BALL_R  = 0.5;   // sphere radius
+const FB_STICK_H = 1.6;   // stick length
+const FB_STICK_R = 0.035; // stick radius
+const FB_BALL_Y  =  0.8;  // ball center (above mid)
+const FB_STICK_Y = -0.5;  // stick center (below mid)
+
 function make3DGeometry(shapeId) {
   switch (shapeId) {
     case 'sphere':   return new THREE.SphereGeometry(1, 48, 48);
@@ -220,24 +232,29 @@ function make3DGeometry(shapeId) {
       g.center();
       return g;
     }
-    case 'cylinder': return new THREE.CylinderGeometry(0.75, 0.75, 1.8, 48);
     case 'cone':     return new THREE.ConeGeometry(1, 2, 48);
     case 'torus':    return new THREE.TorusGeometry(0.75, 0.32, 24, 120);
     case 'cube':     return new THREE.BoxGeometry(1.6, 1.6, 1.6);
-    case 'hexprism': return new THREE.CylinderGeometry(1, 1, 0.75, 6);
     default:         return new THREE.SphereGeometry(1, 48, 48);
   }
 }
 
 async function buildAndExportGLB(shapeId, color, roughness, metalness) {
   const scene = new THREE.Scene();
-  const geometry = make3DGeometry(shapeId);
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(color),
-    roughness,
-    metalness,
-  });
-  scene.add(new THREE.Mesh(geometry, material));
+  const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness, metalness });
+
+  if (shapeId === 'fauxball3d') {
+    const group = new THREE.Group();
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(FB_BALL_R, 36, 36), material);
+    ball.position.y = FB_BALL_Y;
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(FB_STICK_R, FB_STICK_R * 0.8, FB_STICK_H, 12), material);
+    stick.position.y = FB_STICK_Y;
+    group.add(ball);
+    group.add(stick);
+    scene.add(group);
+  } else {
+    scene.add(new THREE.Mesh(make3DGeometry(shapeId), material));
+  }
 
   return new Promise((resolve, reject) => {
     new GLTFExporter().parse(scene, result => resolve(result), reject, { binary: true });
@@ -247,7 +264,21 @@ async function buildAndExportGLB(shapeId, color, roughness, metalness) {
 // ── 3D preview component ─────────────────────────────────────────────────────
 
 function ShapeMesh({ shapeId, color, roughness, metalness }) {
-  const geometry = useMemo(() => make3DGeometry(shapeId), [shapeId]);
+  const geometry = useMemo(() => shapeId === 'fauxball3d' ? null : make3DGeometry(shapeId), [shapeId]);
+  if (shapeId === 'fauxball3d') {
+    return (
+      <group>
+        <mesh position={[0, FB_BALL_Y, 0]}>
+          <sphereGeometry args={[FB_BALL_R, 36, 36]} />
+          <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+        </mesh>
+        <mesh position={[0, FB_STICK_Y, 0]}>
+          <cylinderGeometry args={[FB_STICK_R, FB_STICK_R * 0.8, FB_STICK_H, 12]} />
+          <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
+        </mesh>
+      </group>
+    );
+  }
   return (
     <mesh geometry={geometry}>
       <meshStandardMaterial color={color} roughness={roughness} metalness={metalness} />
@@ -255,16 +286,17 @@ function ShapeMesh({ shapeId, color, roughness, metalness }) {
   );
 }
 
-function Preview3D({ shapeId, color, roughness, metalness, containerRef }) {
+function Preview3D({ shapeId, color, roughness, metalness, containerRef, ambientInt, keyInt, fillInt, envPreset }) {
   return (
     <div
       ref={containerRef}
       style={{ height: 260, borderRadius: 12, overflow: 'hidden', background: '#E8EDE9' }}
     >
-      <Canvas flat gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 1, 3.5], fov: 40 }}>
-        <ambientLight intensity={1.8} />
-        <directionalLight position={[3, 4, 3]} intensity={1.2} />
-        <directionalLight position={[-3, 1, -2]} intensity={0.5} />
+      <Canvas gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 1, 3.5], fov: 40 }}>
+        <ambientLight intensity={ambientInt} />
+        <directionalLight position={[4, 6, 4]} intensity={keyInt} />
+        <directionalLight position={[-3, 2, -2]} intensity={fillInt} />
+        {envPreset !== 'none' && <Environment preset={envPreset} />}
         <Suspense fallback={null}>
           <ShapeMesh shapeId={shapeId} color={color} roughness={roughness} metalness={metalness} />
         </Suspense>
@@ -286,15 +318,21 @@ export default function GenerateShape() {
   const [useGradient, setUseGradient] = useState(false);
 
   // 3D state
-  const [shape3d, setShape3d]         = useState('sphere');
-  const [color3d, setColor3d]         = useState('#F0DEB8');
-  const [roughness, setRoughness]     = useState(0.55);
-  const [metalness, setMetalness]     = useState(0.05);
+  const [shape3d, setShape3d]         = useState('fauxball3d');
+  const [color3d, setColor3d]         = useState(SHAPE_3D_PRESETS.fauxball3d.color);
+  const [roughness, setRoughness]     = useState(SHAPE_3D_PRESETS.fauxball3d.roughness);
+  const [metalness, setMetalness]     = useState(SHAPE_3D_PRESETS.fauxball3d.metalness);
+
+  // Lighting
+  const [ambientInt, setAmbientInt]   = useState(0.4);
+  const [keyInt, setKeyInt]           = useState(2.5);
+  const [fillInt, setFillInt]         = useState(1.0);
+  const [envPreset, setEnvPreset]     = useState('none');
 
   // Shared
   const [elementTypes, setElementTypes]     = useState([]);
   const [elementTypeId, setElementTypeId]   = useState('');
-  const [name, setName]                     = useState('Star');
+  const [name, setName]                     = useState('Faux Ball');
   const [zones, setZones]                   = useState(['top_surface', 'side', 'middle_tier']);
   const [placementConfig, setPlacementConfig] = useState({});
   const [capabilities, setCapabilities]     = useState({ resize: true, duplicate: true, color: false, delete: true });
@@ -331,6 +369,12 @@ export default function GenerateShape() {
     setShape3d(id);
     const found = SHAPES_3D.find(s => s.id === id);
     if (found) setName(found.label);
+    const preset = SHAPE_3D_PRESETS[id];
+    if (preset) {
+      if (preset.color    !== undefined) setColor3d(preset.color);
+      if (preset.roughness !== undefined) setRoughness(preset.roughness);
+      if (preset.metalness !== undefined) setMetalness(preset.metalness);
+    }
   }
 
   function switchType(t) {
@@ -680,10 +724,42 @@ export default function GenerateShape() {
                   roughness={roughness}
                   metalness={metalness}
                   containerRef={preview3dRef}
+                  ambientInt={ambientInt}
+                  keyInt={keyInt}
+                  fillInt={fillInt}
+                  envPreset={envPreset}
                 />
                 <p style={{ fontSize: 11, color: '#9BB5A2', fontWeight: 600, marginTop: 8, textAlign: 'center' }}>
                   Drag to rotate
                 </p>
+
+                {/* Lighting controls */}
+                <div style={{ marginTop: 16, padding: '14px 16px', background: '#F4F8F5', borderRadius: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 2 }}>Lighting</div>
+
+                  {[
+                    { label: 'Ambient',  value: ambientInt, set: setAmbientInt, max: 3 },
+                    { label: 'Key',      value: keyInt,     set: setKeyInt,     max: 6 },
+                    { label: 'Fill',     value: fillInt,    set: setFillInt,    max: 4 },
+                  ].map(({ label, value, set, max }) => (
+                    <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', width: 46 }}>{label}</span>
+                      <input type="range" min={0} max={max} step={0.05} value={value}
+                        onChange={e => set(+e.target.value)} style={{ flex: 1, accentColor: '#3D5A44' }} />
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44', minWidth: 28, textAlign: 'right' }}>{value.toFixed(1)}</span>
+                    </div>
+                  ))}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', width: 46 }}>Env</span>
+                    <select value={envPreset} onChange={e => setEnvPreset(e.target.value)}
+                      style={{ flex: 1, padding: '4px 8px', borderRadius: 6, border: '1.5px solid #C5D4C8', fontFamily: 'Quicksand, sans-serif', fontSize: 12, fontWeight: 600, color: '#2C4433', background: '#fff' }}>
+                      {['none','studio','city','sunset','dawn','warehouse','forest','park','lobby'].map(p => (
+                        <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
             )}
 

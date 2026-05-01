@@ -8,36 +8,82 @@ function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
-function PlacementGrid({ rules, onChange }) {
+function Toggle({ on, onChange }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-      {ZONES.map(z => {
-        const current = rules[z] ?? 'stand';
-        return (
-          <div key={z} style={{ background: '#F4F8F5', borderRadius: 8, padding: '10px 12px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+    <button
+      type="button"
+      onClick={() => onChange(!on)}
+      style={{
+        position: 'relative', width: 44, height: 24, borderRadius: 12, border: 'none',
+        background: on ? '#3D5A44' : '#C5D4C8', cursor: 'pointer', flexShrink: 0,
+        transition: 'background 0.2s',
+      }}
+    >
+      <span style={{
+        position: 'absolute', top: 3, left: on ? 23 : 3, width: 18, height: 18,
+        borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+      }} />
+    </button>
+  );
+}
+
+function PlacementGrid({ rules, onChange }) {
+  function toggleZone(z) {
+    const next = { ...rules };
+    if (next[z]) { delete next[z]; } else { next[z] = 'stand'; }
+    onChange(next);
+  }
+
+  const selectedZones = ZONES.filter(z => rules[z]);
+
+  return (
+    <div>
+      {/* Step 1 — zone chips */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, marginBottom: 12 }}>
+        {ZONES.map(z => {
+          const active = !!rules[z];
+          return (
+            <button key={z} type="button" onClick={() => toggleZone(z)} style={{
+              padding: '6px 14px', borderRadius: 20, cursor: 'pointer',
+              border: `1.5px solid ${active ? '#3D5A44' : '#C5D4C8'}`,
+              background: active ? '#E8EDE9' : '#fff',
+              fontSize: 12, fontWeight: 700, color: active ? '#2C4433' : '#6B8C74',
+              fontFamily: 'Quicksand, sans-serif',
+            }}>
               {z.replace(/_/g, ' ')}
-            </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {MODES.map(mode => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => onChange({ ...rules, [z]: mode })}
-                  style={{
-                    flex: 1, padding: '5px 0', borderRadius: 6, border: 'none', cursor: 'pointer',
-                    fontFamily: 'Quicksand, sans-serif', fontSize: 12, fontWeight: 700,
-                    background: current === mode ? '#3D5A44' : '#E8EDE9',
-                    color: current === mode ? '#fff' : '#6B8C74',
-                  }}
-                >
-                  {mode === 'hug' ? 'Hug' : 'Stand'}
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-      })}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Step 2 — hug / stand per selected zone */}
+      {selectedZones.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {selectedZones.map(z => {
+            const current = rules[z];
+            return (
+              <div key={z} style={{ background: '#F4F8F5', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                  {z.replace(/_/g, ' ')}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {MODES.map(mode => (
+                    <button key={mode} type="button" onClick={() => onChange({ ...rules, [z]: mode })} style={{
+                      flex: 1, padding: '5px 0', borderRadius: 6, border: 'none', cursor: 'pointer',
+                      fontFamily: 'Quicksand, sans-serif', fontSize: 12, fontWeight: 700,
+                      background: current === mode ? '#3D5A44' : '#E8EDE9',
+                      color: current === mode ? '#fff' : '#6B8C74',
+                    }}>
+                      {mode === 'hug' ? 'Hug' : 'Stand'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -133,7 +179,6 @@ export default function ElementTypes() {
     typeRow:    { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '14px 0', borderBottom: '1px solid #EDF0EC' },
     typeName:   { fontSize: 15, fontWeight: 700, color: '#2C4433' },
     typeSlug:   { fontSize: 12, fontWeight: 600, color: '#9BB5A2', marginTop: 2 },
-    badge:      (active) => ({ padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: active ? '#E8F5E9' : '#F5F5F5', color: active ? '#2E7D32' : '#999', border: 'none', cursor: 'pointer', fontFamily: 'Quicksand, sans-serif', flexShrink: 0 }),
     empty:      { textAlign: 'center', color: '#9BB5A2', fontWeight: 600, padding: '32px 0' },
     msg:        (ok) => ({ padding: '10px 14px', borderRadius: 8, fontSize: 13, fontWeight: 700, background: ok ? '#E8F5E9' : '#FFF0F0', color: ok ? '#2E7D32' : '#C0392B', maxWidth: 640, margin: '0 auto 16px' }),
   };
@@ -182,7 +227,7 @@ export default function ElementTypes() {
               <div style={{ marginBottom: 20 }}>
                 <div style={s.sectionLbl}>Placement Rules</div>
                 <p style={{ fontSize: 12, color: '#9BB5A2', fontWeight: 600, margin: '4px 0 0' }}>
-                  Default placement for all elements of this type
+                  Select allowed zones, then choose hug or stand per zone
                 </p>
                 <PlacementGrid rules={placementRules} onChange={setPlacementRules} />
               </div>
@@ -213,9 +258,12 @@ export default function ElementTypes() {
                   {t.description && <div style={{ fontSize: 12, color: '#6B8C74', fontWeight: 600, marginTop: 3 }}>{t.description}</div>}
                   <PlacementSummary rules={t.placement_rules} />
                 </div>
-                <button style={s.badge(t.is_active)} onClick={() => toggleActive(t)}>
-                  {t.is_active ? 'Active' : 'Inactive'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <Toggle on={t.is_active} onChange={() => toggleActive(t)} />
+                  <span style={{ fontSize: 10, fontWeight: 700, color: t.is_active ? '#3D5A44' : '#9BB5A2' }}>
+                    {t.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
               </div>
             ))
           )}
