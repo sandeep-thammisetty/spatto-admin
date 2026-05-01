@@ -164,7 +164,6 @@ export default function ElementTypes() {
 
   const s = {
     page:       { minHeight: '100vh', background: '#EDEAE2', fontFamily: 'Quicksand, sans-serif', padding: '32px 24px' },
-    back:       { display: 'inline-flex', alignItems: 'center', gap: 6, color: '#6B8C74', fontWeight: 700, fontSize: 13, textDecoration: 'none', marginBottom: 24 },
     header:     { display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 640, margin: '0 auto 24px' },
     title:      { fontSize: 22, fontWeight: 800, color: '#2C4433' },
     card:       { background: '#fff', borderRadius: 18, border: '1.5px solid #C5D4C8', padding: 28, maxWidth: 640, margin: '0 auto 16px' },
@@ -187,10 +186,6 @@ export default function ElementTypes() {
     <>
       <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700;800&display=swap" rel="stylesheet" />
       <div style={s.page}>
-        <div style={{ maxWidth: 640, margin: '0 auto' }}>
-          <a href="/" style={s.back}>← Back</a>
-        </div>
-
         <div style={s.header}>
           <div style={s.title}>Element Types</div>
           <button style={s.addBtn} onClick={() => { setShowForm(f => !f); setMsg(null); if (showForm) resetForm(); }}>

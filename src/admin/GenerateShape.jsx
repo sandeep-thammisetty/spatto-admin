@@ -465,7 +465,6 @@ export default function GenerateShape() {
 
   const s = {
     page: { minHeight: '100vh', background: '#EDEAE2', fontFamily: 'Quicksand, sans-serif', padding: '32px 24px' },
-    back: { display: 'inline-flex', alignItems: 'center', gap: 6, color: '#6B8C74', fontWeight: 700, fontSize: 13, textDecoration: 'none', marginBottom: 24 },
     title: { fontSize: 22, fontWeight: 800, color: '#2C4433', marginBottom: 24 },
     typeRow: { display: 'flex', gap: 10, marginBottom: 24 },
     typeBtn: (active) => ({
@@ -523,7 +522,6 @@ export default function GenerateShape() {
       <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700;800&display=swap" rel="stylesheet" />
       <div style={s.page}>
         <div style={{ maxWidth: 1020, margin: '0 auto' }}>
-          <a href="/" style={s.back}>← Back</a>
           <div style={s.title}>Generate Shape Element</div>
 
           {/* 2D / 3D toggle */}

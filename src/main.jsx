@@ -31,6 +31,37 @@ const FALLBACK = (
   </div>
 );
 
+function AppHeader() {
+  const isHome = window.location.pathname === '/';
+  return (
+    <div style={{
+      position: 'sticky', top: 0, zIndex: 200,
+      background: '#fff', borderBottom: '1.5px solid #C5D4C8',
+      padding: '0 32px', height: 56,
+      display: 'flex', alignItems: 'center', gap: 12,
+    }}>
+      {!isHome && (
+        <a
+          href="/"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 32, height: 32, borderRadius: 8, border: '1.5px solid #C5D4C8',
+            color: '#6B8C74', textDecoration: 'none', fontSize: 16, fontWeight: 700,
+            background: '#F4F8F5', flexShrink: 0,
+          }}
+          title="Back to home"
+        >
+          ←
+        </a>
+      )}
+      <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+        <img src={logo} alt="Spattoo" style={{ height: 28 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: '#9BB5A2', letterSpacing: 1.5, textTransform: 'uppercase' }}>Admin</span>
+      </a>
+    </div>
+  );
+}
+
 function Router() {
   const path = window.location.pathname;
   const Screen = ROUTES[path];
@@ -57,50 +88,35 @@ function Router() {
     }
 
     return (
-      <Suspense fallback={FALLBACK}>
-        <Screen supabase={supabase} {...extraProps} />
-      </Suspense>
+      <>
+        <AppHeader />
+        <Suspense fallback={FALLBACK}>
+          <Screen supabase={supabase} {...extraProps} />
+        </Suspense>
+      </>
     );
   }
 
+  // Home dashboard
   return (
     <div style={{ minHeight: '100vh', background: '#EDEAE2', fontFamily: 'Quicksand, sans-serif' }}>
-      <div style={{ padding: '24px 40px', background: '#fff', borderBottom: '1.5px solid #C5D4C8', display: 'flex', alignItems: 'center', gap: 16 }}>
-        <img src={logo} alt="Spattoo" style={{ height: 36 }} />
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', letterSpacing: 1, textTransform: 'uppercase' }}>Admin</span>
-      </div>
+      <AppHeader />
       <div style={{ padding: 40 }}>
         <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12, padding: 0, maxWidth: 320 }}>
-          <li>
-            <a href="/templates" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-              Manage Templates
-            </a>
-          </li>
-          <li>
-            <a href="/templates/design" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-              Design Template
-            </a>
-          </li>
-          <li>
-            <a href="/elements/add" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-              Add Element
-            </a>
-          </li>
-          <li>
-            <a href="/elements/generate" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-              Generate Shape
-            </a>
-          </li>
-          <li>
-            <a href="/elements/types" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-              Element Types
-            </a>
-          </li>
-          <li>
-            <a href="/bakers/onboard" style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-              Onboard Baker
-            </a>
-          </li>
+          {[
+            { href: '/templates',         label: 'Manage Templates' },
+            { href: '/templates/design',  label: 'Design Template' },
+            { href: '/elements/add',      label: 'Add Element' },
+            { href: '/elements/generate', label: 'Generate Shape' },
+            { href: '/elements/types',    label: 'Element Types' },
+            { href: '/bakers/onboard',    label: 'Onboard Baker' },
+          ].map(({ href, label }) => (
+            <li key={href}>
+              <a href={href} style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
+                {label}
+              </a>
+            </li>
+          ))}
         </ul>
       </div>
     </div>

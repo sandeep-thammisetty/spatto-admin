@@ -50,7 +50,6 @@ function createAdminApiClient(bakerId = null) {
 const s = {
   page:    { minHeight: '100vh', background: '#EDEAE2', fontFamily: "'Quicksand', sans-serif" },
   header:  { padding: '16px 28px', background: '#fff', borderBottom: '1.5px solid #C5D4C8', display: 'flex', alignItems: 'center', gap: 12 },
-  back:    { fontSize: 12, color: '#6B8C74', fontWeight: 700, textDecoration: 'none', cursor: 'pointer', background: 'none', border: 'none', fontFamily: 'inherit' },
   title:   { fontSize: 16, fontWeight: 800, color: '#2C4433' },
   setup:   { maxWidth: 480, margin: '60px auto', padding: '0 24px' },
   card:    { background: '#fff', borderRadius: 16, border: '1.5px solid #C5D4C8', padding: 32 },
@@ -137,7 +136,6 @@ export default function DesignTemplate() {
       <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700;800&display=swap" rel="stylesheet" />
       <div style={s.page}>
         <div style={s.header}>
-          <button style={s.back} onClick={() => window.history.back()}>← Back</button>
           <span style={s.title}>Design Template</span>
         </div>
 
