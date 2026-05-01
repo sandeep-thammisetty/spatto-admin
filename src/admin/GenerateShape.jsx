@@ -212,12 +212,14 @@ function makeHeartShape3D() {
 
 const BEVEL = { depth: 0.45, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.05, bevelSegments: 4 };
 
-// Faux ball dimensions — ball sits on stick, whole group centered vertically
-const FB_BALL_R  = 0.5;   // sphere radius
-const FB_STICK_H = 1.6;   // stick length
+// Faux ball: L = 2R so bbox center = ball bottom = stick top = y=0
+// Ball sits above y=0; stick hangs below. When placed on top surface,
+// y=0 aligns with the cake surface so the stick goes fully inside.
+const FB_BALL_R  = 0.6;   // sphere radius
+const FB_STICK_H = 1.2;   // stick length (= 2 × FB_BALL_R)
 const FB_STICK_R = 0.035; // stick radius
-const FB_BALL_Y  =  0.8;  // ball center (above mid)
-const FB_STICK_Y = -0.5;  // stick center (below mid)
+const FB_BALL_Y  =  0.6;  // ball center y (= FB_BALL_R above surface)
+const FB_STICK_Y = -0.6;  // stick center y (= -FB_STICK_H/2)
 
 function make3DGeometry(shapeId) {
   switch (shapeId) {
