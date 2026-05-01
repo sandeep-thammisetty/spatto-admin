@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { fetchElementTypes, getSignedUploadUrl, uploadToR2, createGlobalElement } from '../lib/api.js';
+import { fetchElementTypes, getSignedUploadUrl, uploadToR2, createGlobalElement, removeBg } from '../lib/api.js';
 
 // ── 2D canvas constants ──────────────────────────────────────────────────────
 
@@ -196,11 +196,11 @@ function makeStarShape3D() {
 function makeHeartShape3D() {
   const shape = new THREE.Shape();
   const sc = 1 / 130;
-  shape.moveTo(0, -70 * sc);
-  shape.bezierCurveTo(70 * sc, -130 * sc, 130 * sc, -60 * sc, 130 * sc, -10 * sc);
-  shape.bezierCurveTo(130 * sc, 45 * sc, 70 * sc, 105 * sc, 0, 130 * sc);
-  shape.bezierCurveTo(-70 * sc, 105 * sc, -130 * sc, 45 * sc, -130 * sc, -10 * sc);
-  shape.bezierCurveTo(-130 * sc, -60 * sc, -70 * sc, -130 * sc, 0, -70 * sc);
+  shape.moveTo(0, 70 * sc);
+  shape.bezierCurveTo(70 * sc, 130 * sc, 130 * sc, 60 * sc, 130 * sc, 10 * sc);
+  shape.bezierCurveTo(130 * sc, -45 * sc, 70 * sc, -105 * sc, 0, -130 * sc);
+  shape.bezierCurveTo(-70 * sc, -105 * sc, -130 * sc, -45 * sc, -130 * sc, 10 * sc);
+  shape.bezierCurveTo(-130 * sc, 60 * sc, -70 * sc, 130 * sc, 0, 70 * sc);
   shape.closePath();
   return shape;
 }
@@ -261,7 +261,7 @@ function Preview3D({ shapeId, color, roughness, metalness, containerRef }) {
       ref={containerRef}
       style={{ height: 260, borderRadius: 12, overflow: 'hidden', background: '#E8EDE9' }}
     >
-      <Canvas flat gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 1, 3.5], fov: 40 }}>
+      <Canvas flat gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 1, 3.5], fov: 40 }}>
         <ambientLight intensity={1.8} />
         <directionalLight position={[3, 4, 3]} intensity={1.2} />
         <directionalLight position={[-3, 1, -2]} intensity={0.5} />
@@ -297,6 +297,7 @@ export default function GenerateShape() {
   const [name, setName]                     = useState('Star');
   const [zones, setZones]                   = useState(['top_surface', 'side', 'middle_tier']);
   const [placementConfig, setPlacementConfig] = useState({});
+  const [capabilities, setCapabilities]     = useState({ resize: true, duplicate: true, color: false, delete: true });
   const [saving, setSaving]                 = useState(false);
   const [msg, setMsg]                       = useState(null);
 
@@ -378,19 +379,23 @@ export default function GenerateShape() {
     try {
       if (assetType === '2D') {
         const canvas = canvas2dRef.current;
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const rawBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
         const fn = `${crypto.randomUUID()}.png`;
         const { url: fu, key: fk } = await getSignedUploadUrl('elements/files/2D', fn, 'image/png');
-        await uploadToR2(fu, blob);
+        await uploadToR2(fu, rawBlob);
+        let thumbBlob = rawBlob;
+        try { thumbBlob = await removeBg(rawBlob); } catch (e) { console.warn('remove.bg failed:', e.message); }
         const { url: tu, key: tk } = await getSignedUploadUrl('elements/thumbnails', `${crypto.randomUUID()}.png`, 'image/png');
-        await uploadToR2(tu, blob);
-        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: placementConfig, default_color: null, sort_order: 0 });
+        await uploadToR2(tu, thumbBlob);
+        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: placementConfig, allowed_actions: capabilities, default_color: null, sort_order: 0 });
 
       } else {
         // Capture thumbnail from WebGL canvas
         const glCanvas = preview3dRef.current?.querySelector('canvas');
         if (!glCanvas) throw new Error('3D preview not ready — try again');
-        const thumbBlob = await new Promise(resolve => glCanvas.toBlob(resolve, 'image/png'));
+        const rawThumbBlob = await new Promise(resolve => glCanvas.toBlob(resolve, 'image/png'));
+        let thumbBlob = rawThumbBlob;
+        try { thumbBlob = await removeBg(rawThumbBlob); } catch (e) { console.warn('remove.bg failed:', e.message); }
 
         // Export GLB
         const glbBuffer = await buildAndExportGLB(shape3d, color3d, roughness, metalness);
@@ -403,7 +408,7 @@ export default function GenerateShape() {
         const { url: tu, key: tk } = await getSignedUploadUrl('elements/thumbnails', `${crypto.randomUUID()}.png`, 'image/png');
         await uploadToR2(tu, thumbBlob);
 
-        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: placementConfig, default_color: color3d, sort_order: 0 });
+        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: placementConfig, allowed_actions: capabilities, default_color: color3d, sort_order: 0 });
       }
 
       setMsg({ ok: true, text: 'Element saved!' });
@@ -626,6 +631,32 @@ export default function GenerateShape() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Capabilities */}
+          <div style={s.section}>
+            <div style={s.sectionTitle}>Capabilities</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { key: 'resize',    label: 'Resizable',        hint: '＋/− size buttons in edit strip' },
+                { key: 'duplicate', label: 'Duplicatable',     hint: 'Copy button creates another instance with same size and color' },
+                { key: 'color',     label: 'Color changeable', hint: 'Color picker in designer (3D only)' },
+                { key: 'delete',    label: 'Deletable',        hint: 'Remove button shown when selected' },
+              ].map(({ key, label, hint }) => (
+                <label key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: 18, height: 18, accentColor: '#3D5A44', cursor: 'pointer', marginTop: 1, flexShrink: 0 }}
+                    checked={capabilities[key]}
+                    onChange={e => setCapabilities(c => ({ ...c, [key]: e.target.checked }))}
+                  />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#2C4433' }}>{label}</div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>{hint}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* ── Right: preview + save ── */}

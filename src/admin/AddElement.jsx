@@ -226,7 +226,7 @@ export default function AddElement() {
   const [glbHasTexture, setGlbHasTexture] = useState(null);
   const [assetFile, setAssetFile]         = useState(null);
   const [thumbnailBlob, setThumbnailBlob] = useState(null);
-  const [capabilities, setCapabilities]   = useState({ resize: true, color: false, delete: true });
+  const [capabilities, setCapabilities]   = useState({ resize: true, duplicate: true, color: false, delete: true });
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
   const [msg, setMsg]                     = useState(null);
@@ -337,7 +337,7 @@ export default function AddElement() {
       setAssetFile(null);
       setElementColor('#F0DEB8');
       setThumbnailBlob(null);
-      setCapabilities({ resize: true, color: false, delete: true });
+      setCapabilities({ resize: true, duplicate: true, color: false, delete: true });
     } catch (err) {
       setMsg({ ok: false, text: err.message });
     } finally {
@@ -484,9 +484,10 @@ export default function AddElement() {
             <label style={s.label}>Capabilities</label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
               {[
-                { key: 'resize', label: 'Resizable',      hint: 'Drag handle to resize on canvas' },
-                { key: 'color',  label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
-                { key: 'delete', label: 'Deletable',       hint: 'Remove button shown when selected' },
+                { key: 'resize',    label: 'Resizable',        hint: '＋/− size buttons in edit strip' },
+                { key: 'duplicate', label: 'Duplicatable',     hint: 'Copy button creates another instance with same size and color' },
+                { key: 'color',     label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
+                { key: 'delete',    label: 'Deletable',        hint: 'Remove button shown when selected' },
               ].map(({ key, label, hint }) => (
                 <label key={key} style={{ ...s.checkRow, alignItems: 'flex-start', cursor: 'pointer' }}>
                   <input
