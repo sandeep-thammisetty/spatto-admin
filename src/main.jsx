@@ -14,6 +14,7 @@ const ManageTemplates  = lazy(() => import('./admin/ManageTemplates.jsx'));
 const DesignTemplate   = lazy(() => import('./admin/DesignTemplate.jsx'));
 const GenerateShape    = lazy(() => import('./admin/GenerateShape.jsx'));
 const ElementTypes     = lazy(() => import('./admin/ElementTypes.jsx'));
+const PatternBuilder   = lazy(() => import('./admin/PatternBuilder.jsx'));
 
 const ROUTES = {
   '/templates/create':    CreateTemplate,
@@ -23,6 +24,7 @@ const ROUTES = {
   '/elements/generate':   GenerateShape,
   '/elements/types':      ElementTypes,
   '/bakers/onboard':      OnboardBaker,
+  '/patterns/build':      PatternBuilder,
 };
 
 const FALLBACK = (
@@ -110,6 +112,7 @@ function Router() {
             { href: '/elements/generate', label: 'Generate Shape' },
             { href: '/elements/types',    label: 'Element Types' },
             { href: '/bakers/onboard',    label: 'Onboard Baker' },
+            { href: '/patterns/build',    label: 'Pattern Builder' },
           ].map(({ href, label }) => (
             <li key={href}>
               <a href={href} style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
