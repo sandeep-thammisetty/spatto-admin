@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
-import { PatternBuilderCanvas, getOverlappingIds } from '@spattoo/designer';
+import { PatternBuilderCanvas, getOverlappingIds, placementPosition } from '@spattoo/designer';
 import { supabase } from '../lib/supabase.js';
+import * as THREE from 'three';
 
 const DEMO_RADIUS = 1.2;
 const DEMO_TOP_Y  = 1.55;   // BOTTOM_BASE + BOTTOM_H
@@ -92,7 +93,7 @@ function newPlacement(surface = 'top', overrides = {}) {
     id:    crypto.randomUUID(),
     type:  'sphere',
     surface,
-    r:     0.075,
+    r:     0.12,
     color: '#D4AF37',
   };
   if (surface === 'gap') {
@@ -145,7 +146,22 @@ export default function PatternBuilder() {
 
   function addPlacement(surface = 'top', overrides = {}) {
     let extra = overrides;
-    if (surface !== 'gap') {
+    if (surface === 'gap') {
+      const nonGap = placements.filter(p => p.surface !== 'gap');
+      if (nonGap.length >= 2) {
+        // Pick the pair of non-gap balls with the smallest centre-to-centre distance
+        let bestA = nonGap[0], bestB = nonGap[1], bestDist = Infinity;
+        for (let i = 0; i < nonGap.length; i++) {
+          for (let j = i + 1; j < nonGap.length; j++) {
+            const posA = placementPosition(nonGap[i], DEMO_TOP_Y, DEMO_RADIUS, placements);
+            const posB = placementPosition(nonGap[j], DEMO_TOP_Y, DEMO_RADIUS, placements);
+            const dist = new THREE.Vector3().subVectors(posA, posB).length();
+            if (dist < bestDist) { bestDist = dist; bestA = nonGap[i]; bestB = nonGap[j]; }
+          }
+        }
+        extra = { parentA: bestA.id, parentB: bestB.id, ...overrides };
+      }
+    } else {
       const autoTheta = 'thetaOffset' in overrides
         ? overrides.thetaOffset
         : (placements.length * (Math.PI / 4)) % (Math.PI * 2) - Math.PI;
@@ -405,7 +421,7 @@ export default function PatternBuilder() {
                 label="Radius (size)"
                 value={selected.r}
                 min={0.02}
-                max={0.15}
+                max={0.3}
                 step={0.001}
                 onChange={v => updateSelected({ r: v })}
               />
