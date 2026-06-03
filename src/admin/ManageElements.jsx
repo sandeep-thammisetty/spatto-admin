@@ -346,6 +346,8 @@ export default function ManageElements() {
   const [placementConfig,  setPlacementConfig]  = useState('{}');
   const [description,      setDescription]      = useState('');
   const [glbRotation,      setGlbRotation]      = useState([0, 0, 0]);
+  const [frontConfirmed,   setFrontConfirmed]   = useState(false);
+  const [rotationDirty,    setRotationDirty]    = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg,    setMsg]    = useState(null);
   const canvasRef = useRef();
@@ -393,6 +395,8 @@ export default function ManageElements() {
     setGlbMetalness(pc.metalness ?? 0.15);
     setGlbEnvPreset('none');
     setGlbRotation(pc.rotation ?? [0, 0, 0]);
+    setFrontConfirmed(false);
+    setRotationDirty(false);
     setDescription(el.description ?? '');
   }
 
@@ -418,6 +422,10 @@ export default function ManageElements() {
   async function handleSave() {
     if (!selectedEl || !name.trim()) {
       setMsg({ ok: false, text: 'Name is required.' });
+      return;
+    }
+    if (isGlb && rotationDirty && !frontConfirmed) {
+      setMsg({ ok: false, text: 'Rotation was changed — click "Set front view" to confirm the orientation before saving.' });
       return;
     }
     setSaving(true);
@@ -704,11 +712,11 @@ export default function ManageElements() {
                         metalness={glbMetalness}
                         envPreset={glbEnvPreset}
                         rotation={glbRotation}
-                        onRotate={(dx, dy) => setGlbRotation(r => [
+                        onRotate={(dx, dy) => { setRotationDirty(true); setFrontConfirmed(false); setGlbRotation(r => [
                           ((r[0] + dy * 0.5) % 360 + 360) % 360,
                           ((r[1] + dx * 0.5) % 360 + 360) % 360,
                           r[2],
-                        ])}
+                        ]); }}
                         canvasRef={canvasRef}
                         onCapture={captureThumbnail}
                         onTextureDetected={() => {}}
@@ -729,7 +737,7 @@ export default function ManageElements() {
                             <span style={{ fontSize: 11, fontWeight: 700, color: axisColor, width: 14, flexShrink: 0 }}>{axis}</span>
                             <input type="range" min="0" max="359" step="1"
                               value={glbRotation[idx]}
-                              onChange={e => setGlbRotation(r => { const n = [...r]; n[idx] = parseInt(e.target.value); return n; })}
+                              onChange={e => { setRotationDirty(true); setFrontConfirmed(false); setGlbRotation(r => { const n = [...r]; n[idx] = parseInt(e.target.value); return n; }); }}
                               style={{ flex: 1, accentColor: axisColor }} />
                             <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, minWidth: 32, textAlign: 'right' }}>{glbRotation[idx]}°</span>
                           </div>
@@ -739,9 +747,9 @@ export default function ManageElements() {
                             style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: '1.5px solid #C5D4C8', background: '#fff', color: '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
                             Reset
                           </button>
-                          <button onClick={captureThumbnail}
-                            style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: 'none', background: '#3D5A44', color: '#fff', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                            ✓ This is the front — Set Thumbnail
+                          <button onClick={() => { setFrontConfirmed(true); captureThumbnail(); }}
+                            style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${frontConfirmed ? '#3D5A44' : rotationDirty ? '#e05252' : '#3D5A44'}`, background: frontConfirmed ? '#3D5A44' : rotationDirty ? '#fff' : '#3D5A44', color: frontConfirmed ? '#fff' : rotationDirty ? '#e05252' : '#fff', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                            {frontConfirmed ? '✓ Front set' : rotationDirty ? '✱ Set front view (required)' : '✓ This is the front — Set Thumbnail'}
                           </button>
                         </div>
                       </div>

@@ -286,6 +286,7 @@ export default function AddElement() {
   const [placementScale, setPlacementScale]   = useState('');
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, delete: true });
   const [glbRotation, setGlbRotation]     = useState([0, 0, 0]);
+  const [frontConfirmed, setFrontConfirmed] = useState(false);
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
   const [msg, setMsg]                     = useState(null);
@@ -423,6 +424,10 @@ export default function AddElement() {
       setMsg({ ok: false, text: 'Name, element type and asset file are required.' });
       return;
     }
+    if (assetType === '3D' && !frontConfirmed) {
+      setMsg({ ok: false, text: 'Set the front view before saving — drag the model and click "✓ This is the front".' });
+      return;
+    }
     if (applicableZones.length === 0) {
       setMsg({ ok: false, text: 'Select at least one applicable zone.' });
       return;
@@ -533,7 +538,7 @@ export default function AddElement() {
               label={assetType === '3D' ? 'GLB File' : 'Image File'}
               accept={assetType === '3D' ? '.glb,.gltf' : 'image/*'}
               file={assetFile}
-              onChange={f => { setAssetFile(f); setGlbHasTexture(null); setUserPickedColor(false); setGlbRoughness(0.6); setGlbMetalness(0); setGlbEnvPreset('none'); }}
+              onChange={f => { setAssetFile(f); setGlbHasTexture(null); setUserPickedColor(false); setGlbRoughness(0.6); setGlbMetalness(0); setGlbEnvPreset('none'); setGlbRotation([0,0,0]); setFrontConfirmed(false); }}
             />
           )}
 
@@ -684,9 +689,9 @@ export default function AddElement() {
                     style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: '1.5px solid #C5D4C8', background: '#fff', color: '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
                     Reset
                   </button>
-                  <button onClick={captureThumbnail}
-                    style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: 'none', background: '#3D5A44', color: '#fff', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                    ✓ This is the front — Set Thumbnail
+                  <button onClick={() => { setFrontConfirmed(true); captureThumbnail(); }}
+                    style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${frontConfirmed ? '#3D5A44' : '#e05252'}`, background: frontConfirmed ? '#3D5A44' : '#fff', color: frontConfirmed ? '#fff' : '#e05252', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                    {frontConfirmed ? '✓ Front set' : '✱ Set front view (required)'}
                   </button>
                 </div>
               </div>
