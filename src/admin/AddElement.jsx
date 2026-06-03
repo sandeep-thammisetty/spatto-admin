@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, useGLTF, Environment, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import { OrbitControls, useGLTF, Environment } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { fetchElementTypes, fetchParentElements, getSignedUploadUrl, uploadToR2, createGlobalElement, removeBg, suggestElementMeta } from '../lib/api.js';
@@ -213,7 +213,7 @@ function GLBModel({ url, color, roughness, metalness, rotation, onLoad, onTextur
   );
 }
 
-function GLBPreview({ file, color, roughness, metalness, envPreset, rotation, showGizmo = true, canvasRef, onCapture, onTextureDetected, onMaterialRead }) {
+function GLBPreview({ file, color, roughness, metalness, envPreset, rotation, canvasRef, onCapture, onTextureDetected, onMaterialRead }) {
   const [objectUrl, setObjectUrl] = useState(null);
   const [panMode, setPanMode]     = useState(false);
 
@@ -239,11 +239,6 @@ function GLBPreview({ file, color, roughness, metalness, envPreset, rotation, sh
             {envPreset !== 'none' && <Environment preset={envPreset} />}
           </Suspense>
           <OrbitControls enablePan makeDefault mouseButtons={mouseButtons} />
-          {showGizmo && (
-            <GizmoHelper alignment="bottom-left" margin={[60, 60]}>
-              <GizmoViewport axisColors={['#e05252', '#52c452', '#5252e0']} labelColor="white" />
-            </GizmoHelper>
-          )}
         </Canvas>
       </div>
       <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4 }}>
@@ -291,7 +286,6 @@ export default function AddElement() {
   const [placementScale, setPlacementScale]   = useState('');
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, delete: true });
   const [glbRotation, setGlbRotation]     = useState([0, 0, 0]);
-  const [showGizmo,   setShowGizmo]       = useState(true);
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
   const [msg, setMsg]                     = useState(null);
@@ -403,13 +397,7 @@ export default function AddElement() {
   function captureThumbnail() {
     const canvas = canvasRef.current?.querySelector('canvas');
     if (!canvas) return;
-    setShowGizmo(false);
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      canvas.toBlob(blob => {
-        setShowGizmo(true);
-        processRemoveBg(blob);
-      }, 'image/png');
-    }));
+    canvas.toBlob(blob => processRemoveBg(blob), 'image/png');
   }
 
   async function handleSuggest() {
@@ -661,7 +649,6 @@ export default function AddElement() {
                 metalness={glbMetalness}
                 envPreset={glbEnvPreset}
                 rotation={glbRotation}
-                showGizmo={showGizmo}
                 canvasRef={canvasRef}
                 onCapture={captureThumbnail}
                 onTextureDetected={setGlbHasTexture}
