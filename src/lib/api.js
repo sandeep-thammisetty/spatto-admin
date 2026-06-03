@@ -227,7 +227,12 @@ export async function saveTemplateAttrs(templateId, attrs) {
 
 export async function suggestElementMeta(thumbnailBlob, elementType) {
   const arrayBuffer = await thumbnailBlob.arrayBuffer();
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  const base64 = btoa(binary);
   const res = await fetch(`${BASE_URL}/api/admin/elements/suggest`, {
     method: 'POST',
     headers: { ...await authHeaders(), 'Content-Type': 'application/json' },
