@@ -15,6 +15,13 @@ const CAKE_ZONES = [
   { value: 'board',       label: 'Board' },
 ];
 
+const PLACEMENT_MODES = [
+  { value: '',                 label: 'hug (default)' },
+  { value: 'stand',            label: 'stand' },
+  { value: 'faux_ball_single', label: 'faux ball single' },
+  { value: 'faux_balls',       label: 'faux balls' },
+];
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = {
   page: {
@@ -330,7 +337,9 @@ export default function ManageElements() {
   const [glbMetalness,     setGlbMetalness]     = useState(0);
   const [glbEnvPreset,     setGlbEnvPreset]     = useState('none');
 
-  const [placementConfig,  setPlacementConfig]  = useState('{}');
+  const [placementConfig,    setPlacementConfig]    = useState('{}');
+  const [placementZoneConfig, setPlacementZoneConfig] = useState({});
+  const [placementScale,      setPlacementScale]      = useState('');
   const [description,      setDescription]      = useState('');
   const [glbRotation,      setGlbRotation]      = useState([0, 0, 0]);
   const [frontConfirmed,   setFrontConfirmed]   = useState(false);
@@ -381,6 +390,10 @@ export default function ManageElements() {
     setPlacementConfig(JSON.stringify(pc, null, 2));
     setGlbRoughness(pc.roughness ?? 0.6);
     setGlbMetalness(pc.metalness ?? 0.15);
+    const zoneConf = {};
+    (el.allowed_zones ?? []).forEach(z => { if (pc[z]) zoneConf[z] = pc[z]; });
+    setPlacementZoneConfig(zoneConf);
+    setPlacementScale(pc.r != null ? String(pc.r) : '');
     setGlbEnvPreset('none');
     setGlbRotation(pc.rotation ?? [0, 0, 0]);
     setFrontConfirmed(false);
@@ -431,6 +444,13 @@ export default function ManageElements() {
     try {
       let parsedConfig = {};
       try { parsedConfig = JSON.parse(placementConfig); } catch { /* keep empty */ }
+      // Merge zone config
+      applicableZones.forEach(z => {
+        if (placementZoneConfig[z]) parsedConfig[z] = placementZoneConfig[z];
+        else delete parsedConfig[z];
+      });
+      if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
+      else delete parsedConfig.r;
       if (glbRotation.some(v => v !== 0)) parsedConfig.rotation = glbRotation;
       else delete parsedConfig.rotation;
 
@@ -894,15 +914,35 @@ export default function ManageElements() {
                 )}
 
                 {/* ── Placement Config ── */}
-                <div style={s.field}>
-                  <label style={s.label}>Placement Config (JSON)</label>
-                  <textarea
-                    value={placementConfig}
-                    onChange={e => setPlacementConfig(e.target.value)}
-                    rows={5}
-                    style={{ ...s.input, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
-                  />
-                </div>
+                {!isGeom && applicableZones.length > 0 && (
+                  <div style={s.field}>
+                    <label style={s.label}>Placement Config</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {applicableZones.map(zone => {
+                        const zoneLabel = CAKE_ZONES.find(z => z.value === zone)?.label ?? zone;
+                        return (
+                          <div key={zone} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>{zoneLabel}</span>
+                            <select
+                              style={{ ...s.select, flex: 1 }}
+                              value={placementZoneConfig[zone] ?? ''}
+                              onChange={e => setPlacementZoneConfig(c => ({ ...c, [zone]: e.target.value }))}>
+                              {PLACEMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                            </select>
+                          </div>
+                        );
+                      })}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Default scale (r)</span>
+                        <input type="number" min="0.1" step="0.1"
+                          style={{ ...s.input, flex: 1 }}
+                          value={placementScale}
+                          placeholder="e.g. 2.5 — leave blank for auto"
+                          onChange={e => setPlacementScale(e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <button
                   style={{ ...s.btn('primary'), opacity: (saving || removingBg) ? 0.6 : 1 }}
