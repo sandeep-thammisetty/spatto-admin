@@ -250,9 +250,9 @@ function GLBModel({ url, color, roughness, metalness, rotation, onLoad, onTextur
 }
 
 // Accepts either a File object or a URL string
-function GLBPreview({ file, url, color, roughness, metalness, envPreset, rotation, canvasRef, onCapture, onTextureDetected, onMaterialRead }) {
+function GLBPreview({ file, url, color, roughness, metalness, envPreset, rotation, onRotate, canvasRef, onCapture, onTextureDetected, onMaterialRead }) {
   const [objectUrl, setObjectUrl] = useState(null);
-  const [panMode, setPanMode]     = useState(false);
+  const dragRef = useRef(null);
 
   useEffect(() => {
     if (!file) { setObjectUrl(null); return; }
@@ -264,13 +264,29 @@ function GLBPreview({ file, url, color, roughness, metalness, envPreset, rotatio
   const glbUrl = file ? objectUrl : url;
   if (!glbUrl) return null;
 
-  const mouseButtons = panMode
-    ? { LEFT: THREE.MOUSE.PAN,    RIGHT: THREE.MOUSE.ROTATE }
-    : { LEFT: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+  function handlePointerDown(e) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { x: e.clientX, y: e.clientY };
+  }
+  function handlePointerMove(e) {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.x;
+    const dy = e.clientY - dragRef.current.y;
+    dragRef.current = { x: e.clientX, y: e.clientY };
+    onRotate?.(dx, dy);
+  }
+  function handlePointerUp(e) {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    dragRef.current = null;
+  }
 
   return (
     <div style={{ position: 'relative' }}>
-      <div style={s.previewBox} ref={canvasRef}>
+      <div style={{ ...s.previewBox, cursor: 'grab' }} ref={canvasRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}>
         <Canvas flat gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 1, 3], fov: 45 }}>
           <ambientLight intensity={envPreset === 'none' ? 1 : 0.3} />
           <directionalLight position={[2, 2, 2]}  intensity={envPreset === 'none' ? 0.6 : 0.2} />
@@ -288,21 +304,8 @@ function GLBPreview({ file, url, color, roughness, metalness, envPreset, rotatio
             />
             {envPreset !== 'none' && <Environment preset={envPreset} />}
           </Suspense>
-          <OrbitControls enablePan makeDefault mouseButtons={mouseButtons} />
+          <OrbitControls enableRotate={false} enablePan={false} enableZoom makeDefault />
         </Canvas>
-      </div>
-      <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4 }}>
-        {['Rotate', 'Pan'].map(mode => (
-          <button key={mode} onClick={() => setPanMode(mode === 'Pan')}
-            style={{
-              padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              fontSize: 11, fontWeight: 700, fontFamily: "'Quicksand', sans-serif",
-              background: (panMode ? 'Pan' : 'Rotate') === mode ? '#3D5A44' : '#E8EDE9',
-              color:      (panMode ? 'Pan' : 'Rotate') === mode ? '#fff'    : '#3D5A44',
-            }}>
-            {mode}
-          </button>
-        ))}
       </div>
     </div>
   );
@@ -701,6 +704,11 @@ export default function ManageElements() {
                         metalness={glbMetalness}
                         envPreset={glbEnvPreset}
                         rotation={glbRotation}
+                        onRotate={(dx, dy) => setGlbRotation(r => [
+                          ((r[0] + dy * 0.5) % 360 + 360) % 360,
+                          ((r[1] + dx * 0.5) % 360 + 360) % 360,
+                          r[2],
+                        ])}
                         canvasRef={canvasRef}
                         onCapture={captureThumbnail}
                         onTextureDetected={() => {}}
