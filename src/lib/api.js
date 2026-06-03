@@ -38,7 +38,7 @@ async function get(path) {
   return res.json();
 }
 
-async function post(path, body) {
+export async function post(path, body) {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: await authHeaders(),
@@ -47,6 +47,18 @@ async function post(path, body) {
   if (!res.ok) throw new Error(await parseError(res));
   return res.json();
 }
+
+export async function patch(path, body) {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: await authHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export { get };
 
 export async function fetchElementTypes() {
   return get('/api/element-types');
@@ -87,8 +99,22 @@ export async function uploadToR2(signedUrl, file) {
   if (!res.ok) throw new Error('Upload to R2 failed');
 }
 
+export async function fetchAllElements() {
+  return get('/api/admin/elements');
+}
+
 export async function createGlobalElement(payload) {
   return post('/api/admin/elements', payload);
+}
+
+export async function updateGlobalElement(id, payload) {
+  const res = await fetch(`${BASE_URL}/api/admin/elements/${id}`, {
+    method: 'PATCH',
+    headers: await authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
 }
 
 export async function fetchAdminTemplates() {
@@ -125,3 +151,89 @@ export async function createBaker(payload) {
 export async function fetchAdminBakers() {
   return get('/api/admin/bakers');
 }
+
+export async function createPattern(payload) {
+  return post('/api/admin/patterns', payload);
+}
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+
+export async function fetchAllTags() {
+  return get('/api/admin/tags');
+}
+
+export async function createTag(payload) {
+  return post('/api/admin/tags', payload);
+}
+
+export async function updateTag(id, payload) {
+  return patch(`/api/admin/tags/${id}`, payload);
+}
+
+export async function deleteTag(id) {
+  const res = await fetch(`${BASE_URL}/api/admin/tags/${id}`, {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function fetchElementTags(elementId) {
+  return get(`/api/admin/elements/${elementId}/tags`);
+}
+
+export async function saveElementTags(elementId, tagIds) {
+  const res = await fetch(`${BASE_URL}/api/admin/elements/${elementId}/tags`, {
+    method: 'PUT',
+    headers: await authHeaders(),
+    body: JSON.stringify({ tagIds }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function retagElement(elementId) {
+  return post(`/api/admin/elements/${elementId}/retag`, {});
+}
+
+export async function fetchTemplateTags(templateId) {
+  return get(`/api/admin/templates/${templateId}/tags`);
+}
+
+export async function saveTemplateTags(templateId, tagIds) {
+  const res = await fetch(`${BASE_URL}/api/admin/templates/${templateId}/tags`, {
+    method: 'PUT',
+    headers: await authHeaders(),
+    body: JSON.stringify({ tagIds }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function fetchTemplateAttrs(templateId) {
+  return get(`/api/admin/templates/${templateId}/attrs`);
+}
+
+export async function saveTemplateAttrs(templateId, attrs) {
+  const res = await fetch(`${BASE_URL}/api/admin/templates/${templateId}/attrs`, {
+    method: 'PUT',
+    headers: await authHeaders(),
+    body: JSON.stringify(attrs),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function suggestElementMeta(thumbnailBlob, elementType) {
+  const arrayBuffer = await thumbnailBlob.arrayBuffer();
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  const res = await fetch(`${BASE_URL}/api/admin/elements/suggest`, {
+    method: 'POST',
+    headers: { ...await authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageBase64: base64, mimeType: thumbnailBlob.type || 'image/png', elementType }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
