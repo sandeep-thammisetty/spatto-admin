@@ -135,9 +135,10 @@ function GeomSpherePreview({ color, roughness, metalness, envPreset, canvasRef, 
   );
 }
 
-function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected, onMaterialRead }) {
+function GLBModel({ url, color, roughness, metalness, rotation, onLoad, onTextureDetected, onMaterialRead }) {
   const { scene }  = useGLTF(url);
   const { camera, controls } = useThree();
+  const groupRef = useRef();
 
   useEffect(() => {
     if (!scene) return;
@@ -200,10 +201,19 @@ function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected,
     return () => clearTimeout(t);
   }, [scene]);
 
-  return <primitive object={scene} />;
+  const DEG = Math.PI / 180;
+  return (
+    <group ref={groupRef} rotation={[
+      (rotation?.[0] ?? 0) * DEG,
+      (rotation?.[1] ?? 0) * DEG,
+      (rotation?.[2] ?? 0) * DEG,
+    ]}>
+      <primitive object={scene} />
+    </group>
+  );
 }
 
-function GLBPreview({ file, color, roughness, metalness, envPreset, canvasRef, onCapture, onTextureDetected, onMaterialRead }) {
+function GLBPreview({ file, color, roughness, metalness, envPreset, rotation, showGizmo = true, canvasRef, onCapture, onTextureDetected, onMaterialRead }) {
   const [objectUrl, setObjectUrl] = useState(null);
   const [panMode, setPanMode]     = useState(false);
 
@@ -225,13 +235,15 @@ function GLBPreview({ file, color, roughness, metalness, envPreset, canvasRef, o
           <directionalLight position={[2, 2, 2]} intensity={envPreset === 'none' ? 0.6 : 0.2} />
           <directionalLight position={[-2, 1, -2]} intensity={envPreset === 'none' ? 0.4 : 0.1} />
           <Suspense fallback={null}>
-            {objectUrl && <GLBModel url={objectUrl} color={color} roughness={roughness} metalness={metalness} onLoad={onCapture} onTextureDetected={onTextureDetected} onMaterialRead={onMaterialRead} />}
+            {objectUrl && <GLBModel url={objectUrl} color={color} roughness={roughness} metalness={metalness} rotation={rotation} onLoad={onCapture} onTextureDetected={onTextureDetected} onMaterialRead={onMaterialRead} />}
             {envPreset !== 'none' && <Environment preset={envPreset} />}
           </Suspense>
           <OrbitControls enablePan makeDefault mouseButtons={mouseButtons} />
-          <GizmoHelper alignment="bottom-left" margin={[60, 60]}>
-            <GizmoViewport axisColors={['#e05252', '#52c452', '#5252e0']} labelColor="white" />
-          </GizmoHelper>
+          {showGizmo && (
+            <GizmoHelper alignment="bottom-left" margin={[60, 60]}>
+              <GizmoViewport axisColors={['#e05252', '#52c452', '#5252e0']} labelColor="white" />
+            </GizmoHelper>
+          )}
         </Canvas>
       </div>
       <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4 }}>
@@ -278,6 +290,8 @@ export default function AddElement() {
   const [placementConfig, setPlacementConfig] = useState({});
   const [placementScale, setPlacementScale]   = useState('');
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, delete: true });
+  const [glbRotation, setGlbRotation]     = useState([0, 0, 0]);
+  const [showGizmo,   setShowGizmo]       = useState(true);
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
   const [msg, setMsg]                     = useState(null);
@@ -389,7 +403,13 @@ export default function AddElement() {
   function captureThumbnail() {
     const canvas = canvasRef.current?.querySelector('canvas');
     if (!canvas) return;
-    canvas.toBlob(blob => processRemoveBg(blob), 'image/png');
+    setShowGizmo(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      canvas.toBlob(blob => {
+        setShowGizmo(true);
+        processRemoveBg(blob);
+      }, 'image/png');
+    }));
   }
 
   async function handleSuggest() {
@@ -458,6 +478,8 @@ export default function AddElement() {
           if (placementConfig[zone]) builtPlacementConfig[zone] = placementConfig[zone];
         }
         if (placementScale !== '') builtPlacementConfig.r = parseFloat(placementScale);
+        if (assetType === '3D' && glbRotation.some(v => v !== 0))
+          builtPlacementConfig.rotation = glbRotation;
       }
 
       await createGlobalElement({
@@ -638,6 +660,8 @@ export default function AddElement() {
                 roughness={glbRoughness}
                 metalness={glbMetalness}
                 envPreset={glbEnvPreset}
+                rotation={glbRotation}
+                showGizmo={showGizmo}
                 canvasRef={canvasRef}
                 onCapture={captureThumbnail}
                 onTextureDetected={setGlbHasTexture}
@@ -647,6 +671,29 @@ export default function AddElement() {
                   if (color) setElementColor(color);
                 }}
               />
+
+              {/* Orientation calibration */}
+              <div style={{ marginTop: 10, padding: '10px 12px', background: '#f5f8f5', borderRadius: 10, border: '1.5px solid #C5D4C8' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44', marginBottom: 8, fontFamily: "'Quicksand',sans-serif" }}>
+                  Orientation — rotate until front faces you and top faces up
+                </div>
+                {[['X', 0, '#e05252'], ['Y', 1, '#52c452'], ['Z', 2, '#5252e0']].map(([axis, idx, axisColor]) => (
+                  <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: axisColor, width: 14, flexShrink: 0 }}>{axis}</span>
+                    <input type="range" min="0" max="359" step="1"
+                      value={glbRotation[idx]}
+                      onChange={e => setGlbRotation(r => { const n = [...r]; n[idx] = parseInt(e.target.value); return n; })}
+                      style={{ flex: 1, accentColor: axisColor }} />
+                    <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, minWidth: 32, textAlign: 'right' }}>{glbRotation[idx]}°</span>
+                  </div>
+                ))}
+                <button
+                  onClick={() => setGlbRotation([0, 0, 0])}
+                  style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: '1.5px solid #C5D4C8', background: '#fff', color: '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif", marginTop: 2 }}>
+                  Reset
+                </button>
+              </div>
+
               <button style={s.smallBtn} onClick={captureThumbnail}>
                 Re-capture Thumbnail
               </button>
