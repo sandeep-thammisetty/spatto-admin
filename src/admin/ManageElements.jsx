@@ -186,16 +186,18 @@ function GeomSpherePreview({ color, roughness, metalness, envPreset, canvasRef, 
 
 // ── GLB components (same as AddElement) ──────────────────────────────────────
 function CameraCapture({ camRef }) {
-  const { camera } = useThree();
-  useEffect(() => { camRef.current = camera; }, [camera]);
+  const { camera, controls } = useThree();
+  useEffect(() => { camRef.current = { camera, controls }; }, [camera, controls]);
   return null;
 }
 
-function cameraToModelRotation(initialQuat, currentQuat) {
-  const delta = initialQuat.clone().invert().multiply(currentQuat);
-  const euler = new THREE.Euler().setFromQuaternion(delta, 'XYZ');
-  const toDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
-  return [toDeg(euler.x), toDeg(euler.y), toDeg(euler.z)];
+function cameraToModelRotation({ camera, controls }) {
+  const target = controls?.target ?? new THREE.Vector3(0, 0, 0);
+  const rel    = camera.position.clone().sub(target);
+  const phi    = Math.atan2(rel.x, rel.z);
+  const theta  = Math.atan2(rel.y, Math.sqrt(rel.x ** 2 + rel.z ** 2));
+  const toDeg  = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
+  return [toDeg(-theta), toDeg(-phi), 0];
 }
 
 function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected, onMaterialRead }) {
@@ -333,8 +335,7 @@ export default function ManageElements() {
   const [glbRotation,      setGlbRotation]      = useState([0, 0, 0]);
   const [frontConfirmed,   setFrontConfirmed]   = useState(false);
   const [rotationDirty,    setRotationDirty]    = useState(false);
-  const camRef      = useRef(null);
-  const initialQuat = useRef(null);
+  const camRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [msg,    setMsg]    = useState(null);
   const canvasRef = useRef();
@@ -384,7 +385,6 @@ export default function ManageElements() {
     setGlbRotation(pc.rotation ?? [0, 0, 0]);
     setFrontConfirmed(false);
     setRotationDirty(false);
-    initialQuat.current = null;
     setDescription(el.description ?? '');
   }
 
@@ -407,16 +407,9 @@ export default function ManageElements() {
     canvas.toBlob(blob => processRemoveBg(blob), 'image/png');
   }
 
-  function captureInitialQuat() {
-    if (camRef.current && !initialQuat.current) {
-      initialQuat.current = camRef.current.quaternion.clone();
-    }
-  }
-
   function confirmFrontView() {
-    if (camRef.current && initialQuat.current) {
-      const rotation = cameraToModelRotation(initialQuat.current, camRef.current.quaternion);
-      setGlbRotation(rotation);
+    if (camRef.current) {
+      setGlbRotation(cameraToModelRotation(camRef.current));
       setRotationDirty(true);
     }
     setFrontConfirmed(true);
@@ -717,7 +710,7 @@ export default function ManageElements() {
                         envPreset={glbEnvPreset}
                         camRef={camRef}
                         canvasRef={canvasRef}
-                        onCapture={() => { captureInitialQuat(); captureThumbnail(); }}
+                        onCapture={captureThumbnail}
                         onTextureDetected={() => {}}
                         onMaterialRead={({ roughness, metalness, color }) => {
                           setGlbRoughness(roughness);

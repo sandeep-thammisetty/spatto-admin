@@ -203,10 +203,10 @@ function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected,
   return <primitive object={scene} />;
 }
 
-// Captures camera ref from inside Canvas so parent can read it on confirm
+// Captures camera + controls ref from inside Canvas
 function CameraCapture({ camRef }) {
-  const { camera } = useThree();
-  useEffect(() => { camRef.current = camera; }, [camera]);
+  const { camera, controls } = useThree();
+  useEffect(() => { camRef.current = { camera, controls }; }, [camera, controls]);
   return null;
 }
 
@@ -236,12 +236,16 @@ function GLBPreview({ file, color, roughness, metalness, envPreset, camRef, canv
   );
 }
 
-// Compute model rotation from how much the camera orbited vs its initial orientation
-function cameraToModelRotation(initialQuat, currentQuat) {
-  const delta = initialQuat.clone().invert().multiply(currentQuat);
-  const euler = new THREE.Euler().setFromQuaternion(delta, 'XYZ');
-  const toDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
-  return [toDeg(euler.x), toDeg(euler.y), toDeg(euler.z)];
+// Compute model rotation from camera's spherical position relative to target.
+// Camera at phi azimuth and theta elevation → model needs to rotate so that
+// the face pointing toward the camera now faces +Z (outward on the cake).
+function cameraToModelRotation({ camera, controls }) {
+  const target = controls?.target ?? new THREE.Vector3(0, 0, 0);
+  const rel    = camera.position.clone().sub(target);
+  const phi    = Math.atan2(rel.x, rel.z);                              // azimuth
+  const theta  = Math.atan2(rel.y, Math.sqrt(rel.x ** 2 + rel.z ** 2)); // elevation
+  const toDeg  = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
+  return [toDeg(-theta), toDeg(-phi), 0];
 }
 
 export default function AddElement() {
@@ -270,8 +274,7 @@ export default function AddElement() {
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, delete: true });
   const [glbRotation, setGlbRotation]       = useState([0, 0, 0]);
   const [frontConfirmed, setFrontConfirmed] = useState(false);
-  const camRef      = useRef(null);
-  const initialQuat = useRef(null);
+  const camRef = useRef(null);
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
   const [msg, setMsg]                     = useState(null);
@@ -386,16 +389,9 @@ export default function AddElement() {
     canvas.toBlob(blob => processRemoveBg(blob), 'image/png');
   }
 
-  function captureInitialQuat() {
-    if (camRef.current && !initialQuat.current) {
-      initialQuat.current = camRef.current.quaternion.clone();
-    }
-  }
-
   function confirmFrontView() {
-    if (camRef.current && initialQuat.current) {
-      const rotation = cameraToModelRotation(initialQuat.current, camRef.current.quaternion);
-      setGlbRotation(rotation);
+    if (camRef.current) {
+      setGlbRotation(cameraToModelRotation(camRef.current));
     }
     setFrontConfirmed(true);
     captureThumbnail();
@@ -538,7 +534,7 @@ export default function AddElement() {
               label={assetType === '3D' ? 'GLB File' : 'Image File'}
               accept={assetType === '3D' ? '.glb,.gltf' : 'image/*'}
               file={assetFile}
-              onChange={f => { setAssetFile(f); setGlbHasTexture(null); setUserPickedColor(false); setGlbRoughness(0.6); setGlbMetalness(0); setGlbEnvPreset('none'); setGlbRotation([0,0,0]); setFrontConfirmed(false); initialQuat.current = null; }}
+              onChange={f => { setAssetFile(f); setGlbHasTexture(null); setUserPickedColor(false); setGlbRoughness(0.6); setGlbMetalness(0); setGlbEnvPreset('none'); setGlbRotation([0,0,0]); setFrontConfirmed(false); }}
             />
           )}
 
@@ -655,7 +651,7 @@ export default function AddElement() {
                 envPreset={glbEnvPreset}
                 camRef={camRef}
                 canvasRef={canvasRef}
-                onCapture={() => { captureInitialQuat(); captureThumbnail(); }}
+                onCapture={captureThumbnail}
                 onTextureDetected={setGlbHasTexture}
                 onMaterialRead={({ roughness, metalness, color }) => {
                   setGlbRoughness(roughness);
