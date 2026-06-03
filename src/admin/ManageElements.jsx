@@ -266,14 +266,15 @@ function GLBPreview({ file, url, color, roughness, metalness, envPreset, rotatio
 
   function handlePointerDown(e) {
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { x: e.clientX, y: e.clientY };
+    dragRef.current = { x: e.clientX, y: e.clientY, button: e.button };
   }
   function handlePointerMove(e) {
     if (!dragRef.current) return;
     const dx = e.clientX - dragRef.current.x;
     const dy = e.clientY - dragRef.current.y;
-    dragRef.current = { x: e.clientX, y: e.clientY };
-    onRotate?.(dx, dy);
+    dragRef.current = { ...dragRef.current, x: e.clientX, y: e.clientY };
+    if (dragRef.current.button === 2) onRotate?.(0, 0, dx);
+    else                              onRotate?.(dx, dy, 0);
   }
   function handlePointerUp(e) {
     e.currentTarget.releasePointerCapture(e.pointerId);
@@ -286,7 +287,8 @@ function GLBPreview({ file, url, color, roughness, metalness, envPreset, rotatio
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}>
+        onPointerCancel={handlePointerUp}
+        onContextMenu={e => e.preventDefault()}>
         <Canvas flat gl={{ preserveDrawingBuffer: true }} camera={{ position: [0, 1, 3], fov: 45 }}>
           <ambientLight intensity={envPreset === 'none' ? 1 : 0.3} />
           <directionalLight position={[2, 2, 2]}  intensity={envPreset === 'none' ? 0.6 : 0.2} />
@@ -712,10 +714,10 @@ export default function ManageElements() {
                         metalness={glbMetalness}
                         envPreset={glbEnvPreset}
                         rotation={glbRotation}
-                        onRotate={(dx, dy) => { setRotationDirty(true); setFrontConfirmed(false); setGlbRotation(r => [
+                        onRotate={(dx, dy, dz) => { setRotationDirty(true); setFrontConfirmed(false); setGlbRotation(r => [
                           ((r[0] + dy * 0.5) % 360 + 360) % 360,
                           ((r[1] + dx * 0.5) % 360 + 360) % 360,
-                          r[2],
+                          ((r[2] + dz * 0.5) % 360 + 360) % 360,
                         ]); }}
                         canvasRef={canvasRef}
                         onCapture={captureThumbnail}
