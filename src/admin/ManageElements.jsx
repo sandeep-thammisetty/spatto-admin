@@ -48,6 +48,20 @@ const DEFAULT_PIPING_PLACEMENT_CONFIG = {
   bottom_swag_tilt:       0.5,
 };
 
+// Human-readable byte size in KB/MB only. Returns '' for null (procedural elements).
+function formatBytes(bytes) {
+  if (bytes == null) return '';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+// Size above which an asset is flagged as worth optimizing. GLBs are heavier by
+// nature, so they get a more generous ceiling than flat 2D images.
+function isOversized(bytes, isGlb) {
+  if (bytes == null) return false;
+  return bytes > (isGlb ? 5 * 1024 * 1024 : 1 * 1024 * 1024);
+}
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = {
   page: {
@@ -531,6 +545,8 @@ export default function ManageElements() {
         const { url, key } = await getSignedUploadUrl(folder, filename, contentType);
         await uploadToR2(url, newAssetFile);
         updates.image_url = key;
+        // Keep the stored size in sync with the new file.
+        updates.file_size = newAssetFile.size ?? null;
       }
 
       // Upload new thumbnail only when explicitly saving with thumbnail → always a new R2 key.
@@ -646,12 +662,29 @@ export default function ManageElements() {
                   <div>
                     <div style={s.editTitle}>Editing: {selectedEl.name}</div>
                     <div
-                      title="Click to copy"
+                      title="Click to copy element id"
                       onClick={() => navigator.clipboard?.writeText(selectedEl.id)}
                       style={{ fontSize: 11, color: '#9BB5A2', fontFamily: 'monospace', marginTop: 3, cursor: 'pointer' }}
                     >
                       {selectedEl.id}
                     </div>
+                    {selectedEl.image_url && (
+                      <div style={{ fontSize: 11, fontFamily: 'monospace', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span
+                          title="Click to copy R2 key"
+                          onClick={() => navigator.clipboard?.writeText(selectedEl.image_url)}
+                          style={{ color: '#9BB5A2', cursor: 'pointer', wordBreak: 'break-all' }}
+                        >
+                          {selectedEl.image_url.split('/').pop()}
+                        </span>
+                        {selectedEl.file_size != null && (
+                          <span style={{ fontWeight: 700, color: isOversized(selectedEl.file_size, isGlb) ? '#c0392b' : '#6B8C74' }}>
+                            · {formatBytes(selectedEl.file_size)}
+                            {isOversized(selectedEl.file_size, isGlb) && ' · optimize'}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <label style={s.activeToggle(isActive)}>
                     <input

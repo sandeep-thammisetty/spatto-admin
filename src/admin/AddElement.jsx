@@ -445,6 +445,7 @@ export default function AddElement() {
       // Asset file upload — skipped for 3D Geometry (procedural, no file)
       // For 2D, upload the background-removed blob so the canvas renders without a background.
       let assetKey = null;
+      let assetSize = null;
       if (needsFile) {
         const folder = ASSET_TYPES.find(a => a.value === assetType).folder;
         const fileToUpload = assetType === '2D' && thumbnailBlob ? thumbnailBlob : assetFile;
@@ -454,6 +455,8 @@ export default function AddElement() {
         const { url: assetUrl, key } = await getSignedUploadUrl(folder, assetFilename, assetContentType);
         await uploadToR2(assetUrl, fileToUpload);
         assetKey = key;
+        // Record the byte size of what we actually uploaded (bg-removed PNG for 2D).
+        assetSize = fileToUpload.size ?? null;
       }
 
       // Thumbnail is always PNG (remove.bg output or manual upload)
@@ -483,6 +486,7 @@ export default function AddElement() {
         parent_id:        isParent ? null : parentId,
         image_url:        assetKey,
         thumbnail_url:    thumbKey,
+        file_size:        assetSize,
         allowed_zones:    applicableZones,
         placement_config: builtPlacementConfig,
         allowed_actions:  capabilities,
