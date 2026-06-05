@@ -90,6 +90,12 @@ export async function getSignedUploadUrl(folder, filename, contentType) {
   return post('/api/storage/sign-upload', { folder, filename, contentType });
 }
 
+// Delete a managed R2 object. Accepts a bare key or a full public URL; the API
+// normalizes it and refuses anything outside the managed asset folders.
+export async function deleteR2Object(key) {
+  return post('/api/storage/delete', { key });
+}
+
 export async function uploadToR2(signedUrl, file) {
   const res = await fetch(signedUrl, {
     method: 'PUT',

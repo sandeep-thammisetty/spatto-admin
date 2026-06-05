@@ -5,7 +5,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   fetchAdminElementTypes, fetchAllElements, fetchParentElements,
-  getSignedUploadUrl, uploadToR2, updateGlobalElement, removeBg,
+  getSignedUploadUrl, uploadToR2, updateGlobalElement, removeBg, deleteR2Object,
 } from '../lib/api.js';
 
 const CAKE_ZONES = [
@@ -482,6 +482,18 @@ export default function ManageElements() {
       setMsg({ ok: false, text: 'Rotation was changed — click "Set front view" to confirm the orientation before saving.' });
       return;
     }
+    // Replacing an existing asset deletes the old R2 object. Confirm up front; the
+    // delete itself happens only after the new upload + DB update succeed (below).
+    const replacingAsset = !!(newAssetFile && selectedEl.image_url);
+    const oldAssetUrl = replacingAsset ? selectedEl.image_url : null;
+    if (replacingAsset) {
+      const ok = window.confirm(
+        `Replace the ${isGlb ? 'GLB' : 'image'} for "${selectedEl.name}"?\n\n` +
+        `The new file is uploaded first. Only after it saves successfully is the ` +
+        `previous file permanently deleted from storage. This cannot be undone.`
+      );
+      if (!ok) return;
+    }
     setSaving(true);
     setMsg(null);
 
@@ -534,7 +546,19 @@ export default function ManageElements() {
       updates.description = description;
       await updateGlobalElement(selectedEl.id, updates);
 
-      setMsg({ ok: true, text: 'Saved!' });
+      // New file is uploaded and the DB now points at it — safe to delete the old object.
+      let savedText = 'Saved!';
+      if (replacingAsset && updates.image_url) {
+        try {
+          await deleteR2Object(oldAssetUrl);
+          savedText = 'Saved! Old file removed from storage.';
+        } catch (e) {
+          savedText = 'Saved! (Couldn’t delete the old file — remove it manually.)';
+          console.warn('Old asset delete failed:', e);
+        }
+      }
+
+      setMsg({ ok: true, text: savedText });
       setNewAssetFile(null);
       setNewThumbBlob(null);
       await loadAll();
@@ -848,59 +872,8 @@ export default function ManageElements() {
                                 );
                               })}
 
-                              {/* Calibrator paste */}
-                              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44', marginBottom: 4, fontFamily: "'Quicksand',sans-serif" }}>
-                                  Paste from Piping Calibrator → merges into placement_config below
-                                  <div style={{ fontSize: 10, fontWeight: 600, color: '#9aaa9e', marginTop: 2 }}>
-                                    Accepts the combined format (<code>top_*</code> / <code>bottom_*</code> keys for board + rim in one paste) or the legacy single-<code>target</code> string.
-                                  </div>
-                                </div>
-                                <textarea
-                                  rows={14}
-                                  value={calibratorJson}
-                                  onChange={e => setCalibratorJson(e.target.value)}
-                                  onClick={e => e.stopPropagation()}
-                                  onFocus={e => e.stopPropagation()}
-                                  onPointerDown={e => e.stopPropagation()}
-                                  placeholder={'{\n  "bottom_flip": true,\n  "bottom_rotation": [83, -180, -3],\n  "bottom_radial_offset": 0.2,\n  "bottom_y_offset": 0.09,\n  "top_flip": false,\n  "top_rotation": [-15, 97, 12],\n  "top_radial_offset": -0.06,\n  "top_y_offset": -0.02\n}'}
-                                  style={{ width: '100%', minHeight: 200, fontSize: 12, lineHeight: 1.5, fontFamily: 'monospace', borderRadius: 6, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block' }}
-                                />
-                                <button
-                                  onClick={e => {
-                                    e.stopPropagation();
-                                    try {
-                                      const v = JSON.parse(calibratorJson);
-                                      const cur = JSON.parse(placementConfig);
-                                      // New combined format: keys are already top_*/bottom_* (board + rim in
-                                      // one paste). Merge straight in. Legacy format has a `target` plus
-                                      // generic keys (flip/rotation/…) and gets mapped to one prefix.
-                                      const isCombined = Object.keys(v).some(k => k.startsWith('top_') || k.startsWith('bottom_'));
-                                      let merged;
-                                      if (isCombined) {
-                                        merged = { ...cur, ...v };
-                                      } else {
-                                        merged = { ...cur };
-                                        // target 'rim' → top_*; anything else → bottom_* (default, back-compat).
-                                        const p = v.target === 'rim' ? 'top' : 'bottom';
-                                        const flip = v.flip ?? v.flipBottom; // accept new 'flip' or legacy 'flipBottom'
-                                        if (flip            !== undefined) merged[`${p}_flip`]          = flip;
-                                        if (Array.isArray(v.rotation))     merged[`${p}_rotation`]      = v.rotation;
-                                        if (v.radialOffset  !== undefined) merged[`${p}_radial_offset`] = v.radialOffset;
-                                        if (v.yOffset       !== undefined) merged[`${p}_y_offset`]      = v.yOffset;
-                                        if (v.swagCount     !== undefined) merged[`${p}_swag_count`]    = v.swagCount;
-                                        if (v.swagDepth     !== undefined) merged[`${p}_swag_depth`]    = v.swagDepth;
-                                        if (v.swagTilt      !== undefined) merged[`${p}_swag_tilt`]     = v.swagTilt;
-                                      }
-                                      setPlacementConfig(JSON.stringify(merged, null, 2));
-                                      setCalibratorJson('');
-                                    } catch { alert('Invalid JSON — check format and try again.'); }
-                                  }}
-                                  style={{ marginTop: 6, width: '100%', padding: '7px 0', background: '#3D5A44', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: "'Quicksand',sans-serif" }}
-                                >
-                                  Merge into placement_config ↓
-                                </button>
-                              </div>
+                              {/* Calibrator paste + Merge now live side-by-side with the
+                                  placement_config editor below (see the placement_config field). */}
                             </div>
                           );
                         })()}
@@ -1089,22 +1062,105 @@ export default function ManageElements() {
                   </div>
                 )}
 
-                {/* ── placement_config JSON editor ── */}
+                {/* ── placement_config JSON editor (+ calibrator paste side-by-side for piping) ── */}
                 <div style={s.field}>
                   <label style={s.label}>placement_config (JSON)</label>
-                  <textarea
-                    rows={12}
-                    value={placementConfig}
-                    onChange={e => setPlacementConfig(e.target.value)}
-                    onClick={e => e.stopPropagation()}
-                    onFocus={e => e.stopPropagation()}
-                    onPointerDown={e => e.stopPropagation()}
-                    spellCheck={false}
-                    style={{ width: '100%', fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433', background: '#f9fbf9' }}
-                  />
-                  <div style={{ fontSize: 10, color: '#9aaa9e', marginTop: 4, fontFamily: "'Quicksand',sans-serif" }}>
-                    Edit directly or use the Piping Calibrator paste above to merge values in. Saved as-is to the DB.
-                  </div>
+
+                  {isPipingType ? (
+                    <>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
+                        {/* Left — paste from calibrator */}
+                        <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', marginBottom: 4, fontFamily: "'Quicksand',sans-serif", textTransform: 'uppercase', letterSpacing: 0.5 }}>From Piping Calibrator</div>
+                          <textarea
+                            rows={14}
+                            value={calibratorJson}
+                            onChange={e => setCalibratorJson(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            onFocus={e => e.stopPropagation()}
+                            onPointerDown={e => e.stopPropagation()}
+                            spellCheck={false}
+                            placeholder={'{\n  "bottom_flip": true,\n  "bottom_rotation": [83, -180, -3],\n  "bottom_radial_offset": 0.2,\n  "bottom_y_offset": 0.09,\n  "top_flip": false,\n  "top_rotation": [-15, 97, 12],\n  "top_radial_offset": -0.06,\n  "top_y_offset": -0.02\n}'}
+                            style={{ flex: 1, width: '100%', minHeight: 260, fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433' }}
+                          />
+                        </div>
+
+                        {/* Middle — merge arrow */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}>
+                          <button
+                            type="button"
+                            title="Merge the calibrator values into placement_config"
+                            disabled={!calibratorJson.trim()}
+                            onClick={e => {
+                              e.stopPropagation();
+                              try {
+                                const v = JSON.parse(calibratorJson);
+                                const cur = JSON.parse(placementConfig);
+                                // Combined format: keys are already top_*/bottom_* — merge straight in.
+                                // Legacy format has a `target` + generic keys, mapped to one prefix.
+                                const isCombined = Object.keys(v).some(k => k.startsWith('top_') || k.startsWith('bottom_'));
+                                let merged;
+                                if (isCombined) {
+                                  merged = { ...cur, ...v };
+                                } else {
+                                  merged = { ...cur };
+                                  const p = v.target === 'rim' ? 'top' : 'bottom';
+                                  const flip = v.flip ?? v.flipBottom;
+                                  if (flip            !== undefined) merged[`${p}_flip`]          = flip;
+                                  if (Array.isArray(v.rotation))     merged[`${p}_rotation`]      = v.rotation;
+                                  if (v.radialOffset  !== undefined) merged[`${p}_radial_offset`] = v.radialOffset;
+                                  if (v.yOffset       !== undefined) merged[`${p}_y_offset`]      = v.yOffset;
+                                  if (v.swagCount     !== undefined) merged[`${p}_swag_count`]    = v.swagCount;
+                                  if (v.swagDepth     !== undefined) merged[`${p}_swag_depth`]    = v.swagDepth;
+                                  if (v.swagTilt      !== undefined) merged[`${p}_swag_tilt`]     = v.swagTilt;
+                                }
+                                setPlacementConfig(JSON.stringify(merged, null, 2));
+                                setCalibratorJson('');
+                              } catch { alert('Invalid JSON — check format and try again.'); }
+                            }}
+                            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, background: calibratorJson.trim() ? '#3D5A44' : '#C5D4C8', color: '#fff', border: 'none', borderRadius: 10, padding: '14px 16px', cursor: calibratorJson.trim() ? 'pointer' : 'not-allowed', fontFamily: "'Quicksand',sans-serif", fontWeight: 800, fontSize: 11, letterSpacing: 0.5 }}
+                          >
+                            <span style={{ fontSize: 20, lineHeight: 1 }}>→</span>
+                            MERGE
+                          </button>
+                        </div>
+
+                        {/* Right — placement_config saved to DB */}
+                        <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', marginBottom: 4, fontFamily: "'Quicksand',sans-serif", textTransform: 'uppercase', letterSpacing: 0.5 }}>placement_config · saved to DB</div>
+                          <textarea
+                            rows={14}
+                            value={placementConfig}
+                            onChange={e => setPlacementConfig(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            onFocus={e => e.stopPropagation()}
+                            onPointerDown={e => e.stopPropagation()}
+                            spellCheck={false}
+                            style={{ flex: 1, width: '100%', minHeight: 260, fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433', background: '#f9fbf9' }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#9aaa9e', marginTop: 4, fontFamily: "'Quicksand',sans-serif" }}>
+                        Paste the Calibrator output on the left → hit <b>Merge →</b> → it folds into placement_config on the right. Accepts the combined <code>top_*</code>/<code>bottom_*</code> format or the legacy single-<code>target</code> string. Saved as-is to the DB.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <textarea
+                        rows={12}
+                        value={placementConfig}
+                        onChange={e => setPlacementConfig(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        onFocus={e => e.stopPropagation()}
+                        onPointerDown={e => e.stopPropagation()}
+                        spellCheck={false}
+                        style={{ width: '100%', fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433', background: '#f9fbf9' }}
+                      />
+                      <div style={{ fontSize: 10, color: '#9aaa9e', marginTop: 4, fontFamily: "'Quicksand',sans-serif" }}>
+                        Edit directly. Saved as-is to the DB.
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8 }}>
