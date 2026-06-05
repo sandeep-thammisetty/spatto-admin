@@ -12,6 +12,7 @@ const CAKE_ZONES = [
   { value: 'top_surface', label: 'Top Surface' },
   { value: 'side',        label: 'Side' },
   { value: 'middle_tier', label: 'Middle Tier' },
+  { value: 'rim',         label: 'Rim' },
   { value: 'board',       label: 'Board' },
 ];
 
@@ -21,6 +22,31 @@ const PLACEMENT_MODES = [
   { value: 'faux_ball_single', label: 'faux ball single' },
   { value: 'faux_balls',       label: 'faux balls' },
 ];
+
+// Default placement_config for cream_piping elements. When an element has no
+// placement_config stored in the DB, we seed this full template instead of {}
+// so the Piping Calibrator paste has a complete base to merge its values into.
+// Defaults mirror the designer (pipingPlacementFromConfig in spattoo-core):
+// top_flip defaults false, bottom_flip defaults true; *_adjustable gate UI controls.
+const DEFAULT_PIPING_PLACEMENT_CONFIG = {
+  top_flip:               false,
+  top_rotation:           null,
+  top_radial_offset:      null,
+  top_y_offset:           null,
+  bottom_flip:            true,
+  bottom_rotation:        null,
+  bottom_radial_offset:   null,
+  bottom_y_offset:        null,
+  bottom_flip_adjustable: false,
+  bottom_y_adjustable:    false,
+  // Swag/drape: 0 count = flat ring. Set via the Piping Calibrator's Swag controls.
+  top_swag_count:         0,
+  top_swag_depth:         0,
+  top_swag_tilt:          0.5,
+  bottom_swag_count:      0,
+  bottom_swag_depth:      0,
+  bottom_swag_tilt:       0.5,
+};
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = {
@@ -198,13 +224,21 @@ function CameraCapture({ camRef }) {
   return null;
 }
 
-function cameraToModelRotation({ camera, controls }) {
+function cameraToModelRotation({ camera, controls }, preTransformEuler = null) {
   const target = controls?.target ?? new THREE.Vector3(0, 0, 0);
   const rel    = camera.position.clone().sub(target);
   const phi    = Math.atan2(rel.x, rel.z);
   const theta  = Math.atan2(rel.y, Math.sqrt(rel.x ** 2 + rel.z ** 2));
-  const toDeg  = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
-  return [toDeg(-theta), toDeg(-phi), 0];
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-theta, -phi, 0, 'XYZ'));
+  if (preTransformEuler) {
+    // Designer applies preTransform BEFORE placement_config.rotation, so we store
+    // R' = R × inverse(preTransform) so that preTransform × R' == intended view.
+    const qPre = new THREE.Quaternion().setFromEuler(new THREE.Euler(...preTransformEuler, 'XYZ'));
+    q.multiply(qPre.invert());
+  }
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+  const toDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
+  return [toDeg(e.x), toDeg(e.y), toDeg(e.z)];
 }
 
 function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected, onMaterialRead }) {
@@ -341,9 +375,10 @@ export default function ManageElements() {
   const [placementZoneConfig, setPlacementZoneConfig] = useState({});
   const [placementScale,      setPlacementScale]      = useState('');
   const [description,      setDescription]      = useState('');
-  const [glbRotation,      setGlbRotation]      = useState([0, 0, 0]);
-  const [frontConfirmed,   setFrontConfirmed]   = useState(false);
-  const [rotationDirty,    setRotationDirty]    = useState(false);
+  const [glbRotation,        setGlbRotation]        = useState([0, 0, 0]);
+  const [frontConfirmed,     setFrontConfirmed]     = useState(false);
+  const [rotationDirty,      setRotationDirty]      = useState(false);
+  const [calibratorJson, setCalibratorJson] = useState('');
   const camRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [msg,    setMsg]    = useState(null);
@@ -386,7 +421,8 @@ export default function ManageElements() {
     setMsg(null);
     setUserPickedColor(false);
     setGlbColor('#F0DEB8');
-    const pc = el.placement_config ?? {};
+    const elIsPiping = elementTypes.find(t => t.id === el.element_type_id)?.slug === 'cream_piping';
+    const pc = el.placement_config ?? (elIsPiping ? { ...DEFAULT_PIPING_PLACEMENT_CONFIG } : {});
     setPlacementConfig(JSON.stringify(pc, null, 2));
     setGlbRoughness(pc.roughness ?? 0.6);
     setGlbMetalness(pc.metalness ?? 0.15);
@@ -396,6 +432,7 @@ export default function ManageElements() {
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setGlbEnvPreset('none');
     setGlbRotation(pc.rotation ?? [0, 0, 0]);
+    setCalibratorJson('');
     setFrontConfirmed(false);
     setRotationDirty(false);
     setDescription(el.description ?? '');
@@ -422,19 +459,26 @@ export default function ManageElements() {
 
   function confirmFrontView() {
     if (camRef.current) {
-      setGlbRotation(cameraToModelRotation(camRef.current));
+      // For piping elements, compensate for the designer's extractGeo+flipBottom pre-transform
+      // so the stored rotation works correctly in the designer's coordinate frame.
+      let pc = {}; try { pc = JSON.parse(placementConfig); } catch {}
+      const preTransform = isPipingType
+        ? ((pc.bottom_flip ?? true) ? [-Math.PI / 2, 0, 0] : [Math.PI / 2, 0, 0])
+        : null;
+      setGlbRotation(cameraToModelRotation(camRef.current, preTransform));
       setRotationDirty(true);
     }
     setFrontConfirmed(true);
     captureThumbnail();
   }
 
-  async function handleSave() {
+  async function handleSave(withThumbnail = false) {
     if (!selectedEl || !name.trim()) {
       setMsg({ ok: false, text: 'Name is required.' });
       return;
     }
-    if (isGlb && rotationDirty && !frontConfirmed) {
+    // Front-view confirmation only matters when we're (re)capturing the thumbnail.
+    if (withThumbnail && isGlb && rotationDirty && !frontConfirmed) {
       setMsg({ ok: false, text: 'Rotation was changed — click "Set front view" to confirm the orientation before saving.' });
       return;
     }
@@ -453,6 +497,7 @@ export default function ManageElements() {
       else delete parsedConfig.r;
       if (glbRotation.some(v => v !== 0)) parsedConfig.rotation = glbRotation;
       else delete parsedConfig.rotation;
+      // piping fields live directly in the placement_config JSON — no extra merge needed
 
       const updates = {
         name:             name.trim(),
@@ -476,8 +521,10 @@ export default function ManageElements() {
         updates.image_url = key;
       }
 
-      // Upload new thumbnail if provided → always a new R2 key
-      if (newThumbBlob) {
+      // Upload new thumbnail only when explicitly saving with thumbnail → always a new R2 key.
+      // Data-only saves leave the existing thumbnail_url untouched (column not overwritten,
+      // not nulled) so we don't burn remove.bg credits on routine edits.
+      if (withThumbnail && newThumbBlob) {
         const filename = `${crypto.randomUUID()}.png`;
         const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
         await uploadToR2(url, newThumbBlob);
@@ -504,6 +551,7 @@ export default function ManageElements() {
   );
   const isGeom = selectedEl && !selectedEl.image_url &&
     selectedEl.placement_config?.top_surface === 'faux_balls';
+  const isPipingType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'cream_piping';
 
   // Filter + group elements
   const lowerQuery = query.toLowerCase();
@@ -759,6 +807,103 @@ export default function ManageElements() {
                             {frontConfirmed ? '✓ Front set' : '✱ Set front view (required)'}
                           </button>
                         </div>
+                        {isPipingType && (() => {
+                          let pc = {};
+                          try { pc = JSON.parse(placementConfig); } catch {}
+                          const flip = pc.bottom_flip ?? true;
+                          return (
+                            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
+                              {/* Flip toggle */}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Flip for bottom placement</span>
+                                <button onClick={() => {
+                                  try {
+                                    const cur = JSON.parse(placementConfig);
+                                    setPlacementConfig(JSON.stringify({ ...cur, bottom_flip: !flip }, null, 2));
+                                  } catch {}
+                                }}
+                                  style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${flip ? '#3D5A44' : '#C5D4C8'}`, background: flip ? '#3D5A44' : '#fff', color: flip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                                  {flip ? '↕ Flip: On' : '↕ Flip: Off'}
+                                </button>
+                              </div>
+                              {/* User-adjustable toggles */}
+                              {[
+                                { key: 'bottom_y_adjustable',    label: 'User can adjust height' },
+                                { key: 'bottom_flip_adjustable', label: 'User can flip orientation' },
+                              ].map(({ key, label }) => {
+                                let val = false; try { val = !!JSON.parse(placementConfig)[key]; } catch {}
+                                return (
+                                  <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+                                    <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>{label}</span>
+                                    <button onClick={() => {
+                                      try {
+                                        const cur = JSON.parse(placementConfig);
+                                        setPlacementConfig(JSON.stringify({ ...cur, [key]: !val }, null, 2));
+                                      } catch {}
+                                    }}
+                                      style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${val ? '#3D5A44' : '#C5D4C8'}`, background: val ? '#3D5A44' : '#fff', color: val ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                                      {val ? 'ON' : 'OFF'}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+
+                              {/* Calibrator paste */}
+                              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44', marginBottom: 4, fontFamily: "'Quicksand',sans-serif" }}>
+                                  Paste from Piping Calibrator → merges into placement_config below
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: '#9aaa9e', marginTop: 2 }}>
+                                    Accepts the combined format (<code>top_*</code> / <code>bottom_*</code> keys for board + rim in one paste) or the legacy single-<code>target</code> string.
+                                  </div>
+                                </div>
+                                <textarea
+                                  rows={14}
+                                  value={calibratorJson}
+                                  onChange={e => setCalibratorJson(e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  onFocus={e => e.stopPropagation()}
+                                  onPointerDown={e => e.stopPropagation()}
+                                  placeholder={'{\n  "bottom_flip": true,\n  "bottom_rotation": [83, -180, -3],\n  "bottom_radial_offset": 0.2,\n  "bottom_y_offset": 0.09,\n  "top_flip": false,\n  "top_rotation": [-15, 97, 12],\n  "top_radial_offset": -0.06,\n  "top_y_offset": -0.02\n}'}
+                                  style={{ width: '100%', minHeight: 200, fontSize: 12, lineHeight: 1.5, fontFamily: 'monospace', borderRadius: 6, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block' }}
+                                />
+                                <button
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    try {
+                                      const v = JSON.parse(calibratorJson);
+                                      const cur = JSON.parse(placementConfig);
+                                      // New combined format: keys are already top_*/bottom_* (board + rim in
+                                      // one paste). Merge straight in. Legacy format has a `target` plus
+                                      // generic keys (flip/rotation/…) and gets mapped to one prefix.
+                                      const isCombined = Object.keys(v).some(k => k.startsWith('top_') || k.startsWith('bottom_'));
+                                      let merged;
+                                      if (isCombined) {
+                                        merged = { ...cur, ...v };
+                                      } else {
+                                        merged = { ...cur };
+                                        // target 'rim' → top_*; anything else → bottom_* (default, back-compat).
+                                        const p = v.target === 'rim' ? 'top' : 'bottom';
+                                        const flip = v.flip ?? v.flipBottom; // accept new 'flip' or legacy 'flipBottom'
+                                        if (flip            !== undefined) merged[`${p}_flip`]          = flip;
+                                        if (Array.isArray(v.rotation))     merged[`${p}_rotation`]      = v.rotation;
+                                        if (v.radialOffset  !== undefined) merged[`${p}_radial_offset`] = v.radialOffset;
+                                        if (v.yOffset       !== undefined) merged[`${p}_y_offset`]      = v.yOffset;
+                                        if (v.swagCount     !== undefined) merged[`${p}_swag_count`]    = v.swagCount;
+                                        if (v.swagDepth     !== undefined) merged[`${p}_swag_depth`]    = v.swagDepth;
+                                        if (v.swagTilt      !== undefined) merged[`${p}_swag_tilt`]     = v.swagTilt;
+                                      }
+                                      setPlacementConfig(JSON.stringify(merged, null, 2));
+                                      setCalibratorJson('');
+                                    } catch { alert('Invalid JSON — check format and try again.'); }
+                                  }}
+                                  style={{ marginTop: 6, width: '100%', padding: '7px 0', background: '#3D5A44', color: '#fff', border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: "'Quicksand',sans-serif" }}
+                                >
+                                  Merge into placement_config ↓
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
@@ -944,13 +1089,42 @@ export default function ManageElements() {
                   </div>
                 )}
 
-                <button
-                  style={{ ...s.btn('primary'), opacity: (saving || removingBg) ? 0.6 : 1 }}
-                  onClick={handleSave}
-                  disabled={saving || removingBg}
-                >
-                  {saving ? 'Saving…' : removingBg ? 'Processing thumbnail…' : 'Save Changes'}
-                </button>
+                {/* ── placement_config JSON editor ── */}
+                <div style={s.field}>
+                  <label style={s.label}>placement_config (JSON)</label>
+                  <textarea
+                    rows={12}
+                    value={placementConfig}
+                    onChange={e => setPlacementConfig(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onFocus={e => e.stopPropagation()}
+                    onPointerDown={e => e.stopPropagation()}
+                    spellCheck={false}
+                    style={{ width: '100%', fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433', background: '#f9fbf9' }}
+                  />
+                  <div style={{ fontSize: 10, color: '#9aaa9e', marginTop: 4, fontFamily: "'Quicksand',sans-serif" }}>
+                    Edit directly or use the Piping Calibrator paste above to merge values in. Saved as-is to the DB.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    style={{ ...s.btn('primary'), flex: 1, opacity: saving ? 0.6 : 1 }}
+                    onClick={() => handleSave(false)}
+                    disabled={saving}
+                    title="Save all fields without regenerating the thumbnail (keeps the existing image)"
+                  >
+                    {saving ? 'Saving…' : 'Save Data'}
+                  </button>
+                  <button
+                    style={{ ...s.btn('secondary'), flex: 1, opacity: (saving || removingBg) ? 0.6 : 1 }}
+                    onClick={() => handleSave(true)}
+                    disabled={saving || removingBg}
+                    title="Save and upload the captured thumbnail (uses a remove.bg credit)"
+                  >
+                    {removingBg ? 'Processing thumbnail…' : 'Save + Thumbnail'}
+                  </button>
+                </div>
 
                 {msg && <div style={s.msg(msg.ok)}>{msg.text}</div>}
               </>

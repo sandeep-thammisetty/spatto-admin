@@ -14,17 +14,28 @@ const ManageTemplates  = lazy(() => import('./admin/ManageTemplates.jsx'));
 const DesignTemplate   = lazy(() => import('./admin/DesignTemplate.jsx'));
 const GenerateShape    = lazy(() => import('./admin/GenerateShape.jsx'));
 const ElementTypes     = lazy(() => import('./admin/ElementTypes.jsx'));
-const PatternBuilder   = lazy(() => import('./admin/PatternBuilder.jsx'));
-
+const ManageElements   = lazy(() => import('./admin/ManageElements.jsx'));
+const ManageFlavours        = lazy(() => import('./admin/ManageFlavours.jsx'));
+const ManagePlans           = lazy(() => import('./admin/ManagePlans.jsx'));
+const ManageTags            = lazy(() => import('./admin/ManageTags.jsx'));
+const BakerSubscriptions    = lazy(() => import('./admin/BakerSubscriptions.jsx'));
+const PatternBuilder        = lazy(() => import('./admin/PatternBuilder.jsx'));
+const PipingCalibrator      = lazy(() => import('./admin/PipingCalibrator.jsx'));
 const ROUTES = {
   '/templates/create':    CreateTemplate,
   '/templates/design':    DesignTemplate,
   '/templates':           ManageTemplates,
   '/elements/add':        AddElement,
+  '/elements/manage':     ManageElements,
   '/elements/generate':   GenerateShape,
   '/elements/types':      ElementTypes,
+  '/elements/tags':       ManageTags,
   '/bakers/onboard':      OnboardBaker,
-  '/patterns/build':      PatternBuilder,
+  '/bakers/subscriptions': BakerSubscriptions,
+  '/flavours':            ManageFlavours,
+  '/plans':               ManagePlans,
+  '/pattern-builder':     PatternBuilder,
+  '/elements/piping-calibrator': PipingCalibrator,
 };
 
 const FALLBACK = (
@@ -33,13 +44,22 @@ const FALLBACK = (
   </div>
 );
 
-function AppHeader() {
+function AppHeader({ session }) {
   const isHome = window.location.pathname === '/';
+  const [menuOpen, setMenuOpen] = useState(false);
+  const email = session?.user?.email ?? '';
+  const initials = email ? email.slice(0, 2).toUpperCase() : '?';
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    window.location.reload();
+  }
+
   return (
     <div style={{
       position: 'sticky', top: 0, zIndex: 200,
-      background: '#fff', borderBottom: '1.5px solid #C5D4C8',
-      padding: '0 32px', height: 56,
+      background: '#fff', borderBottom: '1px solid #E8EFE9',
+      padding: '0 24px', height: 56,
       display: 'flex', alignItems: 'center', gap: 12,
     }}>
       {!isHome && (
@@ -56,15 +76,74 @@ function AppHeader() {
           ←
         </a>
       )}
-      <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
+      <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flex: 1 }}>
         <img src={logo} alt="Spattoo" style={{ height: 28 }} />
         <span style={{ fontSize: 10, fontWeight: 700, color: '#9BB5A2', letterSpacing: 1.5, textTransform: 'uppercase' }}>Admin</span>
       </a>
+
+      {session && (
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setMenuOpen(o => !o)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: '#F4F8F5', border: '1.5px solid #C5D4C8',
+              borderRadius: 20, padding: '5px 12px 5px 6px',
+              cursor: 'pointer', fontFamily: "'Quicksand', sans-serif",
+            }}
+          >
+            <div style={{
+              width: 28, height: 28, borderRadius: '50%',
+              background: '#2C4433', color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 11, fontWeight: 800, flexShrink: 0,
+            }}>
+              {initials}
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {email}
+            </span>
+            <span style={{ fontSize: 10, color: '#9BB5A2', marginLeft: 2 }}>▾</span>
+          </button>
+
+          {menuOpen && (
+            <>
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 10 }}
+                onClick={() => setMenuOpen(false)}
+              />
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+                background: '#fff', border: '1.5px solid #C5D4C8',
+                borderRadius: 12, boxShadow: '0 4px 20px rgba(44,68,51,0.12)',
+                minWidth: 200, zIndex: 20, overflow: 'hidden',
+              }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid #E8EFE9' }}>
+                  <div style={{ fontSize: 11, color: '#9BB5A2', fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2 }}>Signed in as</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#2C4433', wordBreak: 'break-all' }}>{email}</div>
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  style={{
+                    width: '100%', padding: '12px 16px', background: 'none',
+                    border: 'none', textAlign: 'left', cursor: 'pointer',
+                    fontSize: 13, fontWeight: 700, color: '#C0392B',
+                    fontFamily: "'Quicksand', sans-serif",
+                    display: 'flex', alignItems: 'center', gap: 8,
+                  }}
+                >
+                  <span>↪</span> Sign Out
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function Router() {
+function Router({ session }) {
   const path = window.location.pathname;
   const Screen = ROUTES[path];
 
@@ -91,7 +170,7 @@ function Router() {
 
     return (
       <>
-        <AppHeader />
+        <AppHeader session={session} />
         <Suspense fallback={FALLBACK}>
           <Screen supabase={supabase} {...extraProps} />
         </Suspense>
@@ -102,17 +181,22 @@ function Router() {
   // Home dashboard
   return (
     <div style={{ minHeight: '100vh', background: '#EDEAE2', fontFamily: 'Quicksand, sans-serif' }}>
-      <AppHeader />
+      <AppHeader session={session} />
       <div style={{ padding: 40 }}>
         <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12, padding: 0, maxWidth: 320 }}>
           {[
             { href: '/templates',         label: 'Manage Templates' },
             { href: '/templates/design',  label: 'Design Template' },
             { href: '/elements/add',      label: 'Add Element' },
+            { href: '/elements/manage',   label: 'Manage Elements' },
             { href: '/elements/generate', label: 'Generate Shape' },
             { href: '/elements/types',    label: 'Element Types' },
-            { href: '/bakers/onboard',    label: 'Onboard Baker' },
-            { href: '/patterns/build',    label: 'Pattern Builder' },
+            { href: '/bakers/onboard',        label: 'Onboard Baker' },
+            { href: '/bakers/subscriptions',  label: 'Baker Subscriptions' },
+            { href: '/plans',                 label: 'Subscription Plans' },
+            { href: '/flavours',              label: 'Cake Flavours' },
+            { href: '/pattern-builder',       label: 'Pattern Builder' },
+            { href: '/elements/piping-calibrator', label: '🍰 Piping Calibrator' },
           ].map(({ href, label }) => (
             <li key={href}>
               <a href={href} style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
@@ -137,7 +221,7 @@ function App() {
 
   if (session === undefined) return FALLBACK;
   if (!session) return <Login />;
-  return <Router />;
+  return <Router session={session} />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(

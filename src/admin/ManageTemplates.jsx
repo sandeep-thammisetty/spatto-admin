@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { useThree } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
-import { fetchAdminTemplates, createTemplate, updateTemplate, deleteTemplate, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
+import { fetchAdminTemplates, createTemplate, updateTemplate, deleteTemplate, getSignedUploadUrl, uploadToR2, fetchAllTags, saveTemplateTags, saveTemplateAttrs } from '../lib/api.js';
 
 const SHAPES = [
   { value: 'round',      label: 'Round' },
@@ -167,7 +167,7 @@ const s = {
   radioBtn:(active) => ({ flex: 1, padding: '7px 0', borderRadius: 8, cursor: 'pointer', border: `1.5px solid ${active ? '#3D5A44' : '#C5D4C8'}`, background: active ? '#E8EDE9' : '#fff', color: active ? '#2C4433' : '#6B8C74', fontSize: 13, fontWeight: 700, fontFamily: "'Quicksand', sans-serif" }),
   msg:     (ok) => ({ fontSize: 13, fontWeight: 600, color: ok ? '#3D5A44' : '#c00', marginTop: 12 }),
   thumb:   { width: 56, height: 56, borderRadius: 8, objectFit: 'cover', border: '1.5px solid #C5D4C8', background: '#f7f9f7', flexShrink: 0 },
-  badge:   (color) => ({ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: color === 'green' ? '#E8EDE9' : color === 'red' ? '#fdecea' : '#f0f0f0', color: color === 'green' ? '#3D5A44' : color === 'red' ? '#c00' : '#888', letterSpacing: 0.5, textTransform: 'uppercase' }),
+  badge:   (color) => ({ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20, background: color === 'green' ? '#E8EDE9' : color === 'red' ? '#fdecea' : color === 'neutral' ? '#EEE8F0' : '#f0f0f0', color: color === 'green' ? '#3D5A44' : color === 'red' ? '#c00' : color === 'neutral' ? '#7A5A8A' : '#888', letterSpacing: 0.5, textTransform: 'uppercase' }),
 };
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
@@ -179,11 +179,20 @@ function TemplateForm({ onSaved, onCancel }) {
   const [shape, setShape]             = useState('round');
   const [tierCount, setTierCount]     = useState(1);
   const [tierColors, setTierColors]   = useState([DEFAULT_TIER_COLOR]);
+  const [weight, setWeight]           = useState('');
+  const [minAge, setMinAge]           = useState('');
+  const [maxAge, setMaxAge]           = useState('');
+  const [occasionTags, setOccasionTags] = useState([]);
+  const [selectedTagIds, setSelectedTagIds] = useState(new Set());
   const [thumbBlob, setThumbBlob]     = useState(null);
   const [capturing, setCapturing]     = useState(false);
   const [saving, setSaving]           = useState(false);
   const [msg, setMsg]                 = useState(null);
   const canvasRef                     = useRef();
+
+  useEffect(() => {
+    fetchAllTags().then(tags => setOccasionTags(tags.filter(t => t.category === 'occasion')));
+  }, []);
 
   // Keep tierColors length in sync with tierCount
   useEffect(() => {
@@ -230,7 +239,7 @@ function TemplateForm({ onSaved, onCancel }) {
         await uploadToR2(url, thumbBlob);
         thumbnailKey = key;
       }
-      await createTemplate({
+      const newTemplate = await createTemplate({
         name:          name.trim(),
         shape,
         tier_count:    tierCount,
@@ -257,6 +266,17 @@ function TemplateForm({ onSaved, onCancel }) {
         thumbnail_url: thumbnailKey,
         sort_order:    0,
       });
+      const hasAttrs = weight !== '' || minAge !== '' || maxAge !== '';
+      if (hasAttrs) {
+        await saveTemplateAttrs(newTemplate.id, {
+          min_weight_kg: weight !== '' ? parseFloat(weight) : null,
+          min_age:       minAge !== '' ? parseInt(minAge, 10) : null,
+          max_age:       maxAge !== '' ? parseInt(maxAge, 10) : null,
+        });
+      }
+      if (selectedTagIds.size > 0) {
+        await saveTemplateTags(newTemplate.id, [...selectedTagIds]);
+      }
       setMsg({ ok: true, text: 'Template created!' });
       setTimeout(onSaved, 700);
     } catch (err) {
@@ -317,6 +337,40 @@ function TemplateForm({ onSaved, onCancel }) {
           </div>
         </div>
       </div>
+
+      <div style={s.grid}>
+        <div style={s.field}>
+          <label style={s.label}>Weight (kg)</label>
+          <input style={s.input} type="number" min="0" step="0.5" placeholder="e.g. 1.5" value={weight} onChange={e => setWeight(e.target.value)} />
+        </div>
+        <div style={s.field}>
+          <label style={s.label}>Age Range (years)</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input style={{ ...s.input, width: '50%' }} type="number" min="0" step="1" placeholder="Min" value={minAge} onChange={e => setMinAge(e.target.value)} />
+            <span style={{ color: '#6B8C74', fontWeight: 700 }}>–</span>
+            <input style={{ ...s.input, width: '50%' }} type="number" min="0" step="1" placeholder="Max" value={maxAge} onChange={e => setMaxAge(e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      {occasionTags.length > 0 && (
+        <div style={s.field}>
+          <label style={s.label}>Occasions</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {occasionTags.map(tag => {
+              const selected = selectedTagIds.has(tag.id);
+              return (
+                <button key={tag.id} type="button"
+                  style={{ padding: '5px 14px', borderRadius: 20, border: `1.5px solid ${selected ? '#3D5A44' : '#C5D4C8'}`, background: selected ? '#E8EDE9' : '#fff', color: selected ? '#2C4433' : '#6B8C74', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Quicksand', sans-serif" }}
+                  onClick={() => setSelectedTagIds(prev => { const next = new Set(prev); selected ? next.delete(tag.id) : next.add(tag.id); return next; })}
+                >
+                  {tag.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={s.field}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -427,6 +481,13 @@ export default function ManageTemplates() {
                     <div style={{ fontSize: 12, color: '#6B8C74', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                       <span>{t.shape}</span>
                       <span>{t.tier_count} tier{t.tier_count > 1 ? 's' : ''}</span>
+                      {t.attrs?.min_weight_kg != null && <span>{t.attrs.min_weight_kg} kg</span>}
+                      {(t.attrs?.min_age != null || t.attrs?.max_age != null) && (
+                        <span>{t.attrs?.min_age ?? 0}–{t.attrs?.max_age ?? '∞'} yrs</span>
+                      )}
+                      {(t.tag_slugs ?? []).map(slug => (
+                        <span key={slug} style={s.badge('neutral')}>{slug.replace(/_/g, ' ')}</span>
+                      ))}
                       <span style={s.badge('green')}>{t.type}</span>
                       <span style={s.badge(t.is_active ? 'green' : 'red')}>{t.is_active ? 'Active' : 'Inactive'}</span>
                     </div>

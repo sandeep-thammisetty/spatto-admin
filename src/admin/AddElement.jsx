@@ -15,6 +15,7 @@ const CAKE_ZONES = [
   { value: 'top_surface',  label: 'Top Surface' },
   { value: 'side',         label: 'Side' },
   { value: 'middle_tier',  label: 'Middle Tier' },
+  { value: 'rim',          label: 'Rim' },
   { value: 'board',        label: 'Board' },
 ];
 
@@ -272,8 +273,9 @@ export default function AddElement() {
   const [placementConfig, setPlacementConfig] = useState({});
   const [placementScale, setPlacementScale]   = useState('');
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, delete: true });
-  const [glbRotation, setGlbRotation]       = useState([0, 0, 0]);
-  const [frontConfirmed, setFrontConfirmed] = useState(false);
+  const [glbRotation, setGlbRotation]         = useState([0, 0, 0]);
+  const [frontConfirmed, setFrontConfirmed]   = useState(false);
+  const [pipingBottomFlip, setPipingBottomFlip] = useState(true);
   const camRef = useRef(null);
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
@@ -432,8 +434,8 @@ export default function AddElement() {
       setMsg({ ok: false, text: 'Select a parent element or check "Is Parent".' });
       return;
     }
-    if ((assetType === '3D' || assetType === '3D_GEOM') && !thumbnailBlob) {
-      setMsg({ ok: false, text: 'A thumbnail is required — upload one below.' });
+    if (!thumbnailBlob) {
+      setMsg({ ok: false, text: 'A thumbnail is required — upload or capture one below.' });
       return;
     }
     setSaving(true);
@@ -469,6 +471,9 @@ export default function AddElement() {
         if (placementScale !== '') builtPlacementConfig.r = parseFloat(placementScale);
         if (assetType === '3D' && glbRotation.some(v => v !== 0))
           builtPlacementConfig.rotation = glbRotation;
+        if (assetType === '3D' && isPipingType) {
+          builtPlacementConfig.bottom_flip = pipingBottomFlip;
+        }
       }
 
       await createGlobalElement({
@@ -503,12 +508,15 @@ export default function AddElement() {
       setPlacementConfig({});
       setPlacementScale('');
       setCapabilities({ resize: true, duplicate: true, color: false, delete: true });
+      setPipingBottomFlip(true);
     } catch (err) {
       setMsg({ ok: false, text: err.message });
     } finally {
       setSaving(false);
     }
   }
+
+  const isPipingType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'cream_piping';
 
   return (
     <>
@@ -680,6 +688,17 @@ export default function AddElement() {
                     {frontConfirmed ? '✓ Front set' : '✱ Set front view (required)'}
                   </button>
                 </div>
+                {isPipingType && (
+                  <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Flip for bottom placement</span>
+                      <button onClick={() => setPipingBottomFlip(f => !f)}
+                        style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${pipingBottomFlip ? '#3D5A44' : '#C5D4C8'}`, background: pipingBottomFlip ? '#3D5A44' : '#fff', color: pipingBottomFlip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                        {pipingBottomFlip ? '↕ Flip: On' : '↕ Flip: Off'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

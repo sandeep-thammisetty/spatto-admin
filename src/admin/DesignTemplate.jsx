@@ -41,9 +41,18 @@ function createAdminApiClient(bakerId = null) {
         method: 'POST',
         body: JSON.stringify({ folder, filename, contentType }),
       }),
-    fetchBakerProfile:  () => Promise.resolve({ baker: null, user: null }),
-    signOut:            () => supabase.auth.signOut(),
-    changePassword:     (pw) => supabase.auth.updateUser({ password: pw }),
+    fetchBakerProfile:   () => Promise.resolve({ baker: null, user: null }),
+    fetchBakerSettings:  () => Promise.resolve({}),
+    updateBakerSettings: () => Promise.resolve({ ok: true }),
+    updateBakerProfile:  () => Promise.resolve({ ok: true }),
+    fetchBillingStatus:       () => Promise.resolve({ tier: 'trial', status: 'trial', trial_ends_at: null }),
+    fetchBillingPeriods:      () => Promise.resolve([]),
+    fetchSubscriptionHistory: () => Promise.resolve([]),
+    activateSparkPlan:   () => Promise.resolve({ ok: true }),
+    createSubscription:  () => Promise.resolve({}),
+    cancelSubscription:  () => Promise.resolve({ ok: true }),
+    signOut:             () => supabase.auth.signOut(),
+    changePassword:      (pw) => supabase.auth.updateUser({ password: pw }),
   };
 }
 
