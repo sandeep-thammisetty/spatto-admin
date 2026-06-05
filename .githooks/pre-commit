@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# Warn (do not block) when there are untracked files under src/ that aren't part
+# of this commit. New files are NOT swept in by `git commit -a`/`-am` — they must
+# be `git add`ed explicitly — so they can quietly sit uncommitted for days.
+# See: brand-new admin screens that lived only on a laptop for ~a week.
+
+untracked=$(git ls-files --others --exclude-standard -- src/)
+
+if [ -n "$untracked" ]; then
+  printf '\n\033[33m⚠  Untracked files under src/ are NOT in this commit:\033[0m\n'
+  printf '%s\n' "$untracked" | sed 's/^/     /'
+  printf '\033[33m   If these belong in the commit, run: git add <file> (or git add -A) and re-commit.\033[0m\n\n'
+fi
+
+# Non-blocking: the commit still proceeds.
+exit 0
