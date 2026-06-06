@@ -476,6 +476,20 @@ export default function AddElement() {
           builtPlacementConfig.rotation = glbRotation;
         if (assetType === '3D' && isPipingType) {
           builtPlacementConfig.bottom_flip = pipingBottomFlip;
+          // Flexible out of the box: both layouts allowed, default ring. Admins refine
+          // allowed/default per zone in Manage Elements. See spattoo-core designer.
+          builtPlacementConfig.top_arrangements_allowed    = ['ring', 'single'];
+          builtPlacementConfig.bottom_arrangements_allowed = ['ring', 'single'];
+          builtPlacementConfig.top_arrangement    = 'ring';
+          builtPlacementConfig.bottom_arrangement = 'ring';
+          // single_angle omitted → designer seeds the first piece at the cake front.
+          builtPlacementConfig.top_single_max    = 12;
+          builtPlacementConfig.bottom_single_max = 12;
+          // Alternating pattern off by default; configured later in the Piping Calibrator.
+          builtPlacementConfig.top_alt_enabled    = false;
+          builtPlacementConfig.bottom_alt_enabled = false;
+          builtPlacementConfig.top_pattern    = 'AB';
+          builtPlacementConfig.bottom_pattern = 'AB';
         }
       }
 

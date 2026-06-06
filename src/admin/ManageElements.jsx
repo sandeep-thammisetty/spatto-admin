@@ -7,6 +7,8 @@ import {
   fetchAdminElementTypes, fetchAllElements, fetchParentElements,
   getSignedUploadUrl, uploadToR2, updateGlobalElement, removeBg, deleteR2Object,
 } from '../lib/api.js';
+import { PatternCakeThumb } from './PipingCalibrator.jsx';
+import { normalizeThumbnail } from '../lib/thumbnail.js';
 
 const CAKE_ZONES = [
   { value: 'top_surface', label: 'Top Surface' },
@@ -39,6 +41,10 @@ const DEFAULT_PIPING_PLACEMENT_CONFIG = {
   bottom_y_offset:        null,
   bottom_flip_adjustable: false,
   bottom_y_adjustable:    false,
+  // Shell spacing multiplier per ring (1 = touching/default; >1 = wider gaps, fewer
+  // shells; <1 = tighter). Lets the rim match the board's gap independently.
+  top_spacing:            1,
+  bottom_spacing:         1,
   // Swag/drape: 0 count = flat ring. Set via the Piping Calibrator's Swag controls.
   top_swag_count:         0,
   top_swag_depth:         0,
@@ -46,6 +52,24 @@ const DEFAULT_PIPING_PLACEMENT_CONFIG = {
   bottom_swag_count:      0,
   bottom_swag_depth:      0,
   bottom_swag_tilt:       0.5,
+  // Arrangement: which layouts each zone supports + the default when both are allowed.
+  // New piping elements are flexible out of the box (ring + single). The designer shows
+  // a Ring/Single toggle only when a zone allows both; the user can duplicate single
+  // pieces and rotate each around the cake (single_angle = first piece, single_max = cap).
+  top_arrangements_allowed:    ['ring', 'single'],
+  bottom_arrangements_allowed: ['ring', 'single'],
+  top_arrangement:             'ring',
+  bottom_arrangement:          'ring',
+  // single_angle omitted on purpose → the designer seeds the first piece at the cake
+  // front. Set top_single_angle / bottom_single_angle (radians) here only to override.
+  top_single_max:              12,
+  bottom_single_max:           12,
+  // Alternating A/B pattern: off by default. alt_glb_url is set by the "Alternate shape"
+  // upload; pattern is the repeating cycle string (e.g. "AAB"). See the Piping Calibrator.
+  top_alt_enabled:             false,
+  bottom_alt_enabled:          false,
+  top_pattern:                 'AB',
+  bottom_pattern:              'AB',
 };
 
 // Human-readable byte size in KB/MB only. Returns '' for null (procedural elements).
@@ -375,8 +399,19 @@ export default function ManageElements() {
   const [defaultColor,     setDefaultColor]     = useState('#F0DEB8');
   const [isActive,         setIsActive]         = useState(true);
 
+  // Pattern thumbnail regeneration (piping_pattern elements have no GLB to capture from —
+  // we re-render their referenced block in the stored A/B pattern and snapshot that).
+  // overlap/shellCount only shape the thumbnail image (not saved to placement_config).
+  const [regenerating,     setRegenerating]     = useState(false);
+  const [previewColor,     setPreviewColor]     = useState('#f5e6c8');   // piping cream
+  const [previewCakeColor, setPreviewCakeColor] = useState('#F6C6A8');   // peach cake
+  const [previewBoardColor,setPreviewBoardColor]= useState('#D4AF37');   // gold board
+  const [previewEnv,       setPreviewEnv]       = useState('apartment');
+  const patternCaptureRef = useRef(null);
+
   // File replacements
   const [newAssetFile,     setNewAssetFile]     = useState(null);
+  const [altAssetFile,     setAltAssetFile]     = useState(null);   // alternate piping shape (version B)
   const [newThumbBlob,     setNewThumbBlob]     = useState(null);
   const [removingBg,       setRemovingBg]       = useState(false);
   const [glbColor,         setGlbColor]         = useState('#F0DEB8');
@@ -429,13 +464,15 @@ export default function ManageElements() {
     setParentId(el.parent_id ?? '');
     setCapabilities(el.allowed_actions ?? { resize: true, duplicate: true, color: false, delete: true });
     setDefaultColor(el.default_color ?? '#F0DEB8');
+    setPreviewColor(el.default_color ?? '#f5e6c8');   // seed pattern-thumbnail cream from default
     setIsActive(el.is_active ?? true);
     setNewAssetFile(null);
     setNewThumbBlob(null);
     setMsg(null);
     setUserPickedColor(false);
     setGlbColor('#F0DEB8');
-    const elIsPiping = elementTypes.find(t => t.id === el.element_type_id)?.slug === 'cream_piping';
+    const elSlug = elementTypes.find(t => t.id === el.element_type_id)?.slug;
+    const elIsPiping = elSlug === 'cream_piping' || elSlug === 'piping_pattern';
     const pc = el.placement_config ?? (elIsPiping ? { ...DEFAULT_PIPING_PLACEMENT_CONFIG } : {});
     setPlacementConfig(JSON.stringify(pc, null, 2));
     setGlbRoughness(pc.roughness ?? 0.6);
@@ -549,6 +586,18 @@ export default function ManageElements() {
         updates.file_size = newAssetFile.size ?? null;
       }
 
+      // Upload the alternate piping shape (version B) → store its key in placement_config
+      // for both zones (each zone uses it only when its *_alt_enabled is true).
+      if (altAssetFile) {
+        const ext = altAssetFile.name.split('.').pop();
+        const filename = `${crypto.randomUUID()}.${ext}`;
+        const { url, key } = await getSignedUploadUrl('elements/files/3D', filename, altAssetFile.type || 'model/gltf-binary');
+        await uploadToR2(url, altAssetFile);
+        parsedConfig.bottom_alt_glb_url = key;
+        parsedConfig.top_alt_glb_url    = key;
+        updates.placement_config = parsedConfig;
+      }
+
       // Upload new thumbnail only when explicitly saving with thumbnail → always a new R2 key.
       // Data-only saves leave the existing thumbnail_url untouched (column not overwritten,
       // not nulled) so we don't burn remove.bg credits on routine edits.
@@ -576,6 +625,7 @@ export default function ManageElements() {
 
       setMsg({ ok: true, text: savedText });
       setNewAssetFile(null);
+      setAltAssetFile(null);
       setNewThumbBlob(null);
       await loadAll();
     } catch (err) {
@@ -591,7 +641,14 @@ export default function ManageElements() {
   );
   const isGeom = selectedEl && !selectedEl.image_url &&
     selectedEl.placement_config?.top_surface === 'faux_balls';
-  const isPipingType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'cream_piping';
+  const selectedSlug = elementTypes.find(t => t.id === elementTypeId)?.slug;
+  // cream_piping = a building-block GLB; piping_pattern = a fileless element referencing
+  // blocks via placement_config.parts. Block-only tooling (GLB upload, orientation, alt
+  // shape, thumbnail recapture) stays gated on isPipingType; the shared placement-config
+  // editing surfaces (calibrator paste, arrangement/toggles, defaults) use isPipingConfig.
+  const isPipingType    = selectedSlug === 'cream_piping';
+  const isPipingPattern = selectedSlug === 'piping_pattern';
+  const isPipingConfig  = isPipingType || isPipingPattern;
 
   // Filter + group elements
   const lowerQuery = query.toLowerCase();
@@ -604,6 +661,181 @@ export default function ManageElements() {
       ),
     }))
     .filter(g => g.items.length > 0);
+
+  // Resolve everything needed to re-render a pattern's thumbnail: the referenced building
+  // block's GLB url (part A, and part B if different) plus a calibrator-shaped cfg rebuilt
+  // from the element's stored top_*/bottom_* placement_config. Uses the live editor JSON so
+  // a just-pasted calibrator tweak is reflected. Returns null when not a pattern or the
+  // referenced block can't be resolved (e.g. block deleted) — the button is then hidden.
+  const patternThumb = (() => {
+    if (!isPipingPattern || !selectedEl) return null;
+    let pc = {};
+    try { pc = JSON.parse(placementConfig); } catch { return null; }
+    const parts = Array.isArray(pc.parts) ? pc.parts : [];
+    const block = parts[0]?.element_id ? elements.find(e => e.id === parts[0].element_id) : null;
+    if (!block?.image_url) return null;
+    const altBlock = parts[1]?.element_id ? elements.find(e => e.id === parts[1].element_id) : null;
+    const altGlbUrl = altBlock?.image_url && altBlock.id !== block.id ? altBlock.image_url : null;
+    // Capture the zone the pattern actually uses (prefer board); its *_* fields drive the ring.
+    const onBoard = (selectedEl.allowed_zones ?? applicableZones ?? []).includes('board');
+    const prefix = onBoard ? 'bottom' : 'top';
+    const rot    = Array.isArray(pc[`${prefix}_rotation`])     ? pc[`${prefix}_rotation`]     : [0, 0, 0];
+    const altRot = Array.isArray(pc[`${prefix}_alt_rotation`]) ? pc[`${prefix}_alt_rotation`] : [0, 0, 0];
+    const patStr = pc[`${prefix}_pattern`] || 'AB';
+    const cfg = {
+      flipBottom: pc[`${prefix}_flip`] ?? true,
+      rx: rot[0] || 0, ry: rot[1] || 0, rz: rot[2] || 0,
+      altFlip: pc[`${prefix}_alt_flip`] ?? false,
+      altRx: altRot[0] || 0, altRy: altRot[1] || 0, altRz: altRot[2] || 0,
+      patternA: Math.max(1, (patStr.match(/A/g) || []).length),
+      patternB: Math.max(1, (patStr.match(/B/g) || []).length),
+      radialOffset:    pc[`${prefix}_radial_offset`]     ?? 0,
+      yOffset:         pc[`${prefix}_y_offset`]          ?? 0,
+      spacing:         pc[`${prefix}_spacing`]           ?? 1,
+      altRadialOffset: pc[`${prefix}_alt_radial_offset`] ?? 0,
+      altYOffset:      pc[`${prefix}_alt_y_offset`]      ?? 0,
+    };
+    return { glbUrl: block.image_url, altGlbUrl, cfg, zone: onBoard ? 'board' : 'rim' };
+  })();
+
+  // Capture the live preview canvas as-is → normalize → upload → point the element at the new
+  // thumbnail key (in place: same element id). Best-effort delete of the old one.
+  async function capturePatternThumbnail() {
+    const canvas = patternCaptureRef.current?.querySelector('canvas');
+    if (!canvas) { setMsg({ ok: false, text: 'Pattern preview not ready yet — wait a moment and retry.' }); return; }
+    setRegenerating(true); setMsg(null);
+    try {
+      const raw = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      if (!raw) throw new Error('Could not capture the pattern preview.');
+      const thumb = await normalizeThumbnail(raw);
+      const filename = `${crypto.randomUUID()}.png`;
+      const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
+      await uploadToR2(url, thumb);
+      const oldThumb = selectedEl.thumbnail_url;
+      await updateGlobalElement(selectedEl.id, { thumbnail_url: key });
+      if (oldThumb) deleteR2Object(oldThumb).catch(e => console.warn('Old thumbnail delete failed:', e));
+      setMsg({ ok: true, text: 'Thumbnail captured.' });
+      await loadAll();
+    } catch (e) {
+      setMsg({ ok: false, text: e.message });
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  // Shared piping placement controls (flip, user-adjustable toggles, per-zone arrangement,
+  // alternate shape). Used for both cream_piping blocks and piping_pattern elements. Pattern
+  // elements hide block-only bits: the "pattern-only" visibility flag and the alternate-shape
+  // GLB upload (a pattern self-alternates via placement_config.parts, not an uploaded file).
+  const renderPipingConfig = ({ isPattern }) => {
+    let pc = {};
+    try { pc = JSON.parse(placementConfig); } catch {}
+    const flip = pc.bottom_flip ?? true;
+    const toggles = [
+      { key: 'bottom_y_adjustable',    label: 'User can adjust height' },
+      { key: 'bottom_flip_adjustable', label: 'User can flip orientation' },
+      ...(isPattern ? [] : [{ key: 'pattern_only', label: 'Pattern-only (hide as individual)' }]),
+    ];
+    const updatePc = (patch) => {
+      try { const cur = JSON.parse(placementConfig); setPlacementConfig(JSON.stringify({ ...cur, ...patch }, null, 2)); } catch {}
+    };
+    return (
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
+        {/* Flip toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Flip for bottom placement</span>
+          <button onClick={() => updatePc({ bottom_flip: !flip })}
+            style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${flip ? '#3D5A44' : '#C5D4C8'}`, background: flip ? '#3D5A44' : '#fff', color: flip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+            {flip ? '↕ Flip: On' : '↕ Flip: Off'}
+          </button>
+        </div>
+        {/* User-adjustable toggles (+ pattern-only visibility flag for blocks) */}
+        {toggles.map(({ key, label }) => {
+          const val = !!pc[key];
+          return (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>{label}</span>
+              <button onClick={() => updatePc({ [key]: !val })}
+                style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${val ? '#3D5A44' : '#C5D4C8'}`, background: val ? '#3D5A44' : '#fff', color: val ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                {val ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          );
+        })}
+
+        {/* ── Arrangement: allowed layouts + default, per zone ── */}
+        {[
+          { zone: 'rim',   prefix: 'top',    label: 'Rim' },
+          { zone: 'board', prefix: 'bottom', label: 'Board' },
+        ].filter(({ zone }) => (applicableZones.length ? applicableZones.includes(zone) : true)).map(({ prefix, label }) => {
+          const allowedKey = `${prefix}_arrangements_allowed`;
+          const allowed = Array.isArray(pc[allowedKey]) && pc[allowedKey].length ? pc[allowedKey] : ['ring'];
+          const def = allowed.includes(pc[`${prefix}_arrangement`]) ? pc[`${prefix}_arrangement`] : allowed[0];
+          const toggleMode = (mode) => {
+            const has = allowed.includes(mode);
+            let next = has ? allowed.filter(m => m !== mode) : [...allowed, mode];
+            next = ['ring', 'single'].filter(m => next.includes(m));   // canonical order
+            if (!next.length) next = [mode];                           // never empty
+            const patch = { [allowedKey]: next };
+            if (!next.includes(pc[`${prefix}_arrangement`])) patch[`${prefix}_arrangement`] = next[0];
+            updatePc(patch);
+          };
+          return (
+            <div key={prefix} style={{ marginTop: 10, paddingTop: 8, borderTop: '1px dashed #e2ebe3' }}>
+              <div style={{ fontSize: 11, color: '#3D5A44', fontWeight: 700, fontFamily: "'Quicksand',sans-serif", marginBottom: 6 }}>{label} arrangement</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {['ring', 'single'].map(mode => {
+                  const on = allowed.includes(mode);
+                  return (
+                    <button key={mode} onClick={() => toggleMode(mode)}
+                      style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${on ? '#3D5A44' : '#C5D4C8'}`, background: on ? '#3D5A44' : '#fff', color: on ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif", textTransform: 'capitalize' }}>
+                      {on ? `✓ ${mode}` : mode}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Default only matters when the user can switch (both allowed) */}
+              {allowed.length > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                  <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Default</span>
+                  {allowed.map(mode => {
+                    const on = def === mode;
+                    return (
+                      <button key={mode} onClick={() => updatePc({ [`${prefix}_arrangement`]: mode })}
+                        style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: `2px solid ${on ? '#3D5A44' : '#C5D4C8'}`, background: on ? '#eef3ef' : '#fff', color: '#3D5A44', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif", textTransform: 'capitalize' }}>
+                        {on ? `● ${mode}` : `○ ${mode}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* ── Alternate shape (block-only: pattern B comes from a referenced block) ── */}
+        {!isPattern && (() => {
+          const curAltKey = pc.bottom_alt_glb_url || pc.top_alt_glb_url || null;
+          return (
+            <div style={{ marginTop: 12, paddingTop: 8, borderTop: '1px dashed #e2ebe3' }}>
+              <div style={{ fontSize: 11, color: '#3D5A44', fontWeight: 700, fontFamily: "'Quicksand',sans-serif", marginBottom: 4 }}>Alternate shape (GLB)</div>
+              <div style={{ fontSize: 10, color: '#6B8C74', marginBottom: 6, lineHeight: 1.4 }}>
+                Used as version “B” when an alternating pattern is enabled (set the pattern + B’s
+                transform in the Piping Calibrator). Leave empty to alternate the same shape flipped.
+              </div>
+              <label style={{ display: 'block' }}>
+                <div style={{ border: '2px dashed #C5D4C8', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', background: '#F4F8F5', fontSize: 11, color: '#6B8C74', textAlign: 'center' }}>
+                  {altAssetFile ? `New: ${altAssetFile.name}` : (curAltKey ? `Current: ${String(curAltKey).split('/').pop()} — replace…` : 'Click to pick alternate .glb')}
+                  <input type="file" accept=".glb,.gltf" style={{ display: 'none' }}
+                    onChange={e => { if (e.target.files[0]) setAltAssetFile(e.target.files[0]); }} />
+                </div>
+              </label>
+            </div>
+          );
+        })()}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -864,73 +1096,116 @@ export default function ManageElements() {
                             {frontConfirmed ? '✓ Front set' : '✱ Set front view (required)'}
                           </button>
                         </div>
-                        {isPipingType && (() => {
-                          let pc = {};
-                          try { pc = JSON.parse(placementConfig); } catch {}
-                          const flip = pc.bottom_flip ?? true;
-                          return (
-                            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
-                              {/* Flip toggle */}
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Flip for bottom placement</span>
-                                <button onClick={() => {
-                                  try {
-                                    const cur = JSON.parse(placementConfig);
-                                    setPlacementConfig(JSON.stringify({ ...cur, bottom_flip: !flip }, null, 2));
-                                  } catch {}
-                                }}
-                                  style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${flip ? '#3D5A44' : '#C5D4C8'}`, background: flip ? '#3D5A44' : '#fff', color: flip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                                  {flip ? '↕ Flip: On' : '↕ Flip: Off'}
-                                </button>
-                              </div>
-                              {/* User-adjustable toggles */}
-                              {[
-                                { key: 'bottom_y_adjustable',    label: 'User can adjust height' },
-                                { key: 'bottom_flip_adjustable', label: 'User can flip orientation' },
-                              ].map(({ key, label }) => {
-                                let val = false; try { val = !!JSON.parse(placementConfig)[key]; } catch {}
-                                return (
-                                  <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
-                                    <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>{label}</span>
-                                    <button onClick={() => {
-                                      try {
-                                        const cur = JSON.parse(placementConfig);
-                                        setPlacementConfig(JSON.stringify({ ...cur, [key]: !val }, null, 2));
-                                      } catch {}
-                                    }}
-                                      style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${val ? '#3D5A44' : '#C5D4C8'}`, background: val ? '#3D5A44' : '#fff', color: val ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                                      {val ? 'ON' : 'OFF'}
-                                    </button>
-                                  </div>
-                                );
-                              })}
-
-                              {/* Calibrator paste + Merge now live side-by-side with the
-                                  placement_config editor below (see the placement_config field). */}
-                            </div>
-                          );
-                        })()}
+                        {/* Calibrator paste + Merge live side-by-side with the placement_config
+                            editor below (see the placement_config field). */}
+                        {isPipingType && renderPipingConfig({ isPattern: false })}
                       </div>
                     </div>
                   )}
 
-                  {/* Replace file drop zone */}
-                  <label style={s.fileBox}>
-                    <input type="file"
-                      accept={isGlb ? '.glb,.gltf' : 'image/*'}
-                      style={{ display: 'none' }}
-                      onChange={e => {
-                        const f = e.target.files[0];
-                        if (!f) return;
-                        setNewAssetFile(f);
-                        if (!isGlb) processRemoveBg(f);
-                        setUserPickedColor(false);
-                      }}
-                    />
-                    <span style={{ fontSize: 12, color: '#6B8C74', fontWeight: 600 }}>
-                      {newAssetFile ? `New file: ${newAssetFile.name}` : `Replace ${isGlb ? 'GLB' : 'image'}…`}
-                    </span>
-                  </label>
+                  {/* Piping pattern: no GLB of its own — references building-block elements via
+                      placement_config.parts. Show the same placement controls (flip / toggles /
+                      arrangement) the calibrator tunes, minus block-only bits. */}
+                  {isPipingPattern && (() => {
+                    let pc = {};
+                    try { pc = JSON.parse(placementConfig); } catch {}
+                    const parts = Array.isArray(pc.parts) ? pc.parts : [];
+                    return (
+                      <div style={{ marginBottom: 12, padding: '10px 12px', background: '#f5f8f5', borderRadius: 10, border: '1.5px solid #C5D4C8' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44', fontFamily: "'Quicksand',sans-serif" }}>Piping pattern</div>
+                        <div style={{ fontSize: 10, color: '#6B8C74', marginTop: 4, lineHeight: 1.4 }}>
+                          This pattern references building-block elements (no file of its own). Set the
+                          thumbnail colors below, then capture the preview as this element's thumbnail.
+                        </div>
+                        {parts.length > 0 && (
+                          <div style={{ fontSize: 10, color: '#6B8C74', marginTop: 6 }}>
+                            Block parts: {parts.map(p => p?.element_id).filter(Boolean).join(', ') || '—'}
+                          </div>
+                        )}
+
+                        {/* Live thumbnail preview — this same canvas is the capture source, so
+                            what you see is what gets saved (normalize then crops + centers it).
+                            preserveDrawingBuffer lets capturePatternThumbnail() snapshot it;
+                            dpr 2–3 gives the saved PNG enough resolution from the small preview. */}
+                        {patternThumb && (
+                          <div style={{ marginTop: 10 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', marginBottom: 4, fontFamily: "'Quicksand',sans-serif", textTransform: 'uppercase', letterSpacing: 0.5 }}>Thumbnail preview</div>
+                            <div ref={patternCaptureRef} style={{ width: 200, height: 200, borderRadius: 10, overflow: 'hidden', border: '1.5px solid #C5D4C8', background: '#fff' }}>
+                              <Canvas dpr={[2, 3]} gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 1.55, 4.6], fov: 30 }} style={{ width: '100%', height: '100%', background: 'transparent' }}>
+                                <ambientLight intensity={0.85} />
+                                <directionalLight position={[4, 9, 6]} intensity={1.3} />
+                                <directionalLight position={[-3, 3, -3]} intensity={0.4} />
+                                <Suspense fallback={null}>
+                                  {previewEnv !== 'none' && <Environment preset={previewEnv} />}
+                                  <PatternCakeThumb glbUrl={patternThumb.glbUrl} altGlbUrl={patternThumb.altGlbUrl} cfg={patternThumb.cfg}
+                                    zone={patternThumb.zone} color={previewColor} cakeColor={previewCakeColor} boardColor={previewBoardColor} />
+                                </Suspense>
+                                {/* static framing on the cake centre — no interaction, no auto-rotate (still capture) */}
+                                <OrbitControls makeDefault target={[0, 0.78, 0]} enableZoom={false} enablePan={false} enableRotate={false} />
+                              </Canvas>
+                            </div>
+                            {/* Colors + lighting only affect the thumbnail image, not how the cake renders. */}
+                            {[
+                              { label: 'Piping', value: previewColor,      set: setPreviewColor },
+                              { label: 'Cake',   value: previewCakeColor,  set: setPreviewCakeColor },
+                              { label: 'Board',  value: previewBoardColor, set: setPreviewBoardColor },
+                            ].map(({ label, value, set }) => (
+                              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                                <span style={{ fontSize: 10, color: '#6B8C74', fontWeight: 600, minWidth: 56, fontFamily: "'Quicksand',sans-serif" }}>{label}</span>
+                                <input type="color" value={value} onChange={e => set(e.target.value)}
+                                  style={{ width: 32, height: 26, border: '1.5px solid #C5D4C8', borderRadius: 6, cursor: 'pointer', padding: 2 }} />
+                                <span style={{ fontSize: 10, color: '#3D5A44', fontWeight: 700 }}>{value}</span>
+                              </div>
+                            ))}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                              <span style={{ fontSize: 10, color: '#6B8C74', fontWeight: 600, minWidth: 56, fontFamily: "'Quicksand',sans-serif" }}>Lighting</span>
+                              <select value={previewEnv} onChange={e => setPreviewEnv(e.target.value)}
+                                style={{ flex: 1, fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1.5px solid #C5D4C8', color: '#3D5A44', fontFamily: "'Quicksand',sans-serif" }}>
+                                {['none','apartment','studio','city','sunset','dawn','warehouse','forest','park','lobby'].map(p => (
+                                  <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div style={{ fontSize: 9, color: '#9BB5A2', marginTop: 3 }}>Saved thumbnail is this view, cropped to the cake and centered.</div>
+                          </div>
+                        )}
+
+                        {/* Capture the live preview above as this element's thumbnail (same id) */}
+                        <div style={{ marginTop: 8 }}>
+                          <button onClick={capturePatternThumbnail} disabled={!patternThumb || regenerating}
+                            title={patternThumb ? 'Capture the preview above and save it as this element’s thumbnail' : 'Referenced block could not be resolved'}
+                            style={{ fontSize: 11, padding: '6px 12px', borderRadius: 6, border: '2px solid #3D5A44', background: (!patternThumb || regenerating) ? '#C5D4C8' : '#3D5A44', color: '#fff', cursor: (!patternThumb || regenerating) ? 'not-allowed' : 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                            {regenerating ? 'Capturing…' : '📸 Capture thumbnail'}
+                          </button>
+                          {!patternThumb && parts.length > 0 && (
+                            <div style={{ fontSize: 10, color: '#c0392b', marginTop: 4 }}>Referenced block not found — can’t capture.</div>
+                          )}
+                        </div>
+
+                        {renderPipingConfig({ isPattern: true })}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Replace file drop zone — patterns have no file of their own, so hide it. */}
+                  {!isPipingPattern && (
+                    <label style={s.fileBox}>
+                      <input type="file"
+                        accept={isGlb ? '.glb,.gltf' : 'image/*'}
+                        style={{ display: 'none' }}
+                        onChange={e => {
+                          const f = e.target.files[0];
+                          if (!f) return;
+                          setNewAssetFile(f);
+                          if (!isGlb) processRemoveBg(f);
+                          setUserPickedColor(false);
+                        }}
+                      />
+                      <span style={{ fontSize: 12, color: '#6B8C74', fontWeight: 600 }}>
+                        {newAssetFile ? `New file: ${newAssetFile.name}` : `Replace ${isGlb ? 'GLB' : 'image'}…`}
+                      </span>
+                    </label>
+                  )}
                 </div>
 
                 {/* ── Thumbnail ── */}
@@ -1099,7 +1374,7 @@ export default function ManageElements() {
                 <div style={s.field}>
                   <label style={s.label}>placement_config (JSON)</label>
 
-                  {isPipingType ? (
+                  {isPipingConfig ? (
                     <>
                       <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
                         {/* Left — paste from calibrator */}

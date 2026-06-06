@@ -1,8 +1,10 @@
-import { useState, useMemo, useEffect, Suspense } from 'react';
+import { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { fetchAllElements, fetchElementTypes, createGlobalElement, getSignedUploadUrl, uploadToR2 } from '../lib/api';
+import { normalizeThumbnail } from '../lib/thumbnail.js';
 
 const DEG = Math.PI / 180;
 
@@ -122,47 +124,57 @@ function extractGeo(scene) {
   return { geo, sizeY: size.y };
 }
 
-// ── Single positioned piece ───────────────────────────────────────────────────
-function CalibScene({ glbUrl, cfg, showRing, anchorY, inward }) {
-  const { scene } = useGLTF(glbUrl);
-
-  const { geometry, shellScale, bbDepth, bbWidth } = useMemo(() => {
-    const result = extractGeo(scene);
-    if (!result) return { geometry: null, shellScale: 1, bbDepth: 0, bbWidth: 0 };
-    const geo = result.geo;
-    if (cfg.flipBottom) {
-      geo.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI));
-      geo.computeBoundingBox();
-      geo.translate(0, -geo.boundingBox.min.y, 0);
-    }
-    const sc = (CAKE_RADIUS * 0.24) / result.sizeY;
+// ── Single positioned piece / ring (with optional A/B alternation) ─────────────
+// MUST stay identical to BottomPipingRing/TopPipingRing in spattoo-core CakeTier.jsx.
+function buildShellGeo(scene, flip) {
+  const result = extractGeo(scene);
+  if (!result) return null;
+  const geo = result.geo;
+  if (flip) {
+    geo.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI));
     geo.computeBoundingBox();
-    const bb = new THREE.Vector3(); geo.boundingBox.getSize(bb);
-    return { geometry: geo, shellScale: sc, bbDepth: bb.z, bbWidth: bb.x };
-  }, [scene, cfg.flipBottom]);
+    geo.translate(0, -geo.boundingBox.min.y, 0);
+  }
+  const sc = (CAKE_RADIUS * 0.24) / result.sizeY;
+  geo.computeBoundingBox();
+  const bb = new THREE.Vector3(); geo.boundingBox.getSize(bb);
+  return { geometry: geo, shellScale: sc, bbDepth: bb.z, bbWidth: bb.x };
+}
+
+function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl }) {
+  const { scene } = useGLTF(glbUrl);
+  const { scene: sceneAlt } = useGLTF(altGlbUrl || glbUrl);
+
+  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom), [scene, cfg.flipBottom]);
+  const B = useMemo(() => (cfg.altEnabled ? buildShellGeo(sceneAlt, cfg.altFlip) : null),
+    [cfg.altEnabled, sceneAlt, cfg.altFlip]);
+
+  const pattern = patternStr(cfg);
+  const altActive = cfg.altEnabled;
 
   // Ring positions — identical formula to BottomPipingRing in the designer
   const positions = useMemo(() => {
-    if (!geometry) return [];
+    if (!A) return [];
     // Board hugs the side wall (outward); rim sits on the top surface (inward).
-    const halfDepth = (bbDepth / 2) * shellScale;
+    const halfDepth = (A.bbDepth / 2) * A.shellScale;
     const r    = CAKE_RADIUS + (inward ? -halfDepth : halfDepth) + cfg.radialOffset;
-    const step = shellScale * bbWidth * 0.9;
+    const step = A.shellScale * A.bbWidth * 0.9 * (cfg.spacing ?? 1);
     if (cfg.swagCount > 0 && cfg.swagDepth > 0) {
       return buildSwagRing({ r, baseY: anchorY + cfg.yOffset, step, swagCount: cfg.swagCount, swagDepth: cfg.swagDepth, swagTilt: cfg.swagTilt });
     }
-    const count = Math.max(6, Math.round((2 * Math.PI * CAKE_RADIUS) / step));
+    let count = Math.max(6, Math.round((2 * Math.PI * r) / step));
+    if (altActive) { const L = pattern.length || 1; count = Math.max(L, Math.ceil(count / L) * L); }
     return Array.from({ length: count }, (_, i) => {
       const angle = (i / count) * Math.PI * 2;
       return { pos: [Math.cos(angle) * r, anchorY + cfg.yOffset, Math.sin(angle) * r], rotY: angle, tq: [0, 0, 0, 1] };
     });
-  }, [geometry, shellScale, bbDepth, bbWidth, cfg.radialOffset, cfg.yOffset, cfg.swagCount, cfg.swagDepth, cfg.swagTilt, anchorY, inward]);
+  }, [A, cfg.radialOffset, cfg.yOffset, cfg.spacing, cfg.swagCount, cfg.swagDepth, cfg.swagTilt, anchorY, inward, altActive, pattern]);
 
   // Bend mode: deform the whole strip into U festoons draped on the wall.
   const festoonGeos = useMemo(() => {
     if (!cfg.bend) return null;
     return buildFestoons(scene, {
-      flip: false, // bend builds its own orientation (bumps point outward); ring-flip not used here
+      flip: false,
       festoons: cfg.festoons,
       depth: cfg.bendDepth,
       attachY: anchorY + cfg.yOffset,
@@ -170,7 +182,7 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward }) {
     });
   }, [scene, cfg.bend, cfg.festoons, cfg.bendDepth, cfg.yOffset, cfg.radialOffset, anchorY]);
 
-  if (!geometry) return null;
+  if (!A) return null;
 
   if (festoonGeos) {
     return (
@@ -185,24 +197,168 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward }) {
     );
   }
 
-  // Y onto the group, X+Z onto the mesh — same split as BottomPipingRing
-  const ryGroup = cfg.ry * DEG;
-  const meshRot = [cfg.rx * DEG, 0, cfg.rz * DEG];
+  // Y onto the group, X+Z onto the mesh — same split as the designer.
+  const ryA = cfg.ry * DEG, meshA = [cfg.rx * DEG, 0, cfg.rz * DEG];
+  const ryB = cfg.altRy * DEG, meshB = [cfg.altRx * DEG, 0, cfg.altRz * DEG];
+  const dRadialB = altActive ? (cfg.altRadialOffset - cfg.radialOffset) : 0;
+  const dYB = altActive ? (cfg.altYOffset - cfg.yOffset) : 0;
+  const L = pattern.length || 1;
   const pts = showRing ? positions : (positions.length ? [positions[0]] : []);
 
   return (
     <>
-      {pts.map((u, i) => (
-        <group key={i} position={u.pos} quaternion={u.tq}>
-          <group rotation={[0, -u.rotY + Math.PI / 2 + ryGroup, 0]}>
-            <mesh geometry={geometry} rotation={meshRot} scale={shellScale} castShadow>
-              <meshPhysicalMaterial color="#f5e6c8" roughness={0.85}
-                sheen={0.4} sheenRoughness={0.9} sheenColor="#f5e6c8" />
+      {pts.map((u, i) => {
+        const isB = altActive && B && pattern[i % L] === 'B';
+        const ver = isB ? B : A;
+        let pos = u.pos;
+        if (isB && (dRadialB || dYB)) {
+          const [px, , pz] = u.pos; const len = Math.hypot(px, pz) || 1;
+          pos = [px + (px / len) * dRadialB, u.pos[1] + dYB, pz + (pz / len) * dRadialB];
+        }
+        return (
+          <group key={i} position={pos} quaternion={u.tq}>
+            <group rotation={[0, -u.rotY + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
+              <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale} castShadow>
+                <meshPhysicalMaterial color="#f5e6c8" roughness={0.85}
+                  sheen={0.4} sheenRoughness={0.9} sheenColor="#f5e6c8" />
+              </mesh>
+            </group>
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+// ── Pattern thumbnail: a short FRONT ARC of the real ring, facing the camera ──
+// A flat side-by-side row can't reproduce the cake look: on the ring each shell is rotated
+// to follow the curve (-angle + π/2 + ry) and overlaps the next, which is what makes the
+// scrolls tuck into a continuous border. So we render the EXACT ring transform for a few
+// shells centred on the front (angle = π/2, which faces +Z toward the camera), then shift the
+// whole arc forward so that front shell sits at the origin — the capture camera then sees the
+// border head-on, identical to spattoo-core. `overlap` is the ring's spacing factor (0.9 =
+// default ring look; lower packs tighter). `shellCount` = how many shells across the arc.
+export function BuildingBlockScene({ glbUrl, altGlbUrl, cfg, overlap = 0.9, shellCount = 2, color = '#f5e6c8' }) {
+  const { scene }          = useGLTF(glbUrl);
+  const { scene: sceneAlt } = useGLTF(altGlbUrl || glbUrl);
+  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom), [scene, cfg.flipBottom]);
+  const B = useMemo(() => buildShellGeo(sceneAlt, cfg.altFlip), [sceneAlt, cfg.altFlip]);
+  if (!A) return null;
+  const pattern = patternStr(cfg);
+  const L = pattern.length;
+  const total = Math.max(1, shellCount);
+  // Same radius + step the designer's BottomPipingRing uses (board hugs the wall, outward).
+  const r    = CAKE_RADIUS + (A.bbDepth / 2) * A.shellScale + (cfg.radialOffset || 0);
+  const step = A.shellScale * A.bbWidth * overlap * (cfg.spacing ?? 1);
+  const dAngle = step / r;                 // angular spacing between consecutive shells
+  const FRONT  = Math.PI / 2;              // front of the ring → +Z, toward the camera
+  const ryA = cfg.ry * DEG, meshA = [cfg.rx * DEG, 0, cfg.rz * DEG];
+  const ryB = cfg.altRy * DEG, meshB = [cfg.altRx * DEG, 0, cfg.altRz * DEG];
+  const dRadialB = (cfg.altRadialOffset || 0) - (cfg.radialOffset || 0);
+  const dYB      = (cfg.altYOffset || 0) - (cfg.yOffset || 0);
+  // Scale the motif to FILL ~85% of the capture frustum width (both up for a lone A/B set and
+  // down for a long arc) so the shells are always large in frame — the live preview then closely
+  // matches the saved thumbnail (normalizeThumbnail also targets ~80%). Translate is scaled too
+  // so the arc's centre (the front, angle π/2) stays at the origin, head-on to the camera.
+  const span = Math.max(1e-3, (total - 1) * step + A.shellScale * A.bbWidth);
+  const fit  = 0.85 / span;
+  return (
+    // Shift the front point (0, 0, r) to the origin so the capture camera frames it head-on.
+    <group scale={fit} position={[0, 0, -r * fit]}>
+      {Array.from({ length: total }, (_, k) => {
+        const idx   = k - (total - 1) / 2;   // centre the arc on the front (symmetric)
+        const angle = FRONT + idx * dAngle;
+        const isB   = pattern[((k % L) + L) % L] === 'B';
+        const ver   = isB ? (B || A) : A;
+        let pos = [Math.cos(angle) * r, 0, Math.sin(angle) * r];
+        if (isB && (dRadialB || dYB)) {
+          const len = Math.hypot(pos[0], pos[2]) || 1;
+          pos = [pos[0] + (pos[0] / len) * dRadialB, pos[1] + dYB, pos[2] + (pos[2] / len) * dRadialB];
+        }
+        return (
+          <group key={k} position={pos} rotation={[0, -angle + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
+            <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale}>
+              <meshPhysicalMaterial color={color} roughness={0.85} sheen={0.4} sheenRoughness={0.9} sheenColor={color} />
             </mesh>
           </group>
-        </group>
-      ))}
-    </>
+        );
+      })}
+    </group>
+  );
+}
+
+// ── Pattern thumbnail on a mini cake ─────────────────────────────────────────
+// Renders a small cake + board with the pattern's FULL piping ring wrapping it, exactly as
+// the designer renders it (same radius/step/per-shell rotation as BottomPipingRing). This is
+// the clearest "this is a pattern" thumbnail — a continuous border around a cake. Transparent
+// background (no floor) so normalizeThumbnail crops to the cake. Cake/board are neutral so the
+// piping (in the chosen `color`) reads clearly. `zone` picks board (bottom) vs rim (top).
+export function PatternCakeThumb({
+  glbUrl, altGlbUrl, cfg, color = '#f5e6c8', zone = 'board',
+  cakeColor = '#F6C6A8', boardColor = '#D4AF37',
+}) {
+  // Cake top cap is a slightly lighter tint of the cake body so it doesn't need its own control.
+  const capColor = cakeColor;
+  const { scene }          = useGLTF(glbUrl);
+  const { scene: sceneAlt } = useGLTF(altGlbUrl || glbUrl);
+  const isTop = zone === 'rim';
+  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom), [scene, cfg.flipBottom]);
+  const B = useMemo(() => buildShellGeo(sceneAlt, cfg.altFlip), [sceneAlt, cfg.altFlip]);
+  const pattern = patternStr(cfg);
+  const L = pattern.length;
+  const anchorY = isTop ? (Y_BASE + CAKE_HEIGHT) : Y_BASE;
+  const positions = useMemo(() => {
+    if (!A) return [];
+    const halfDepth = (A.bbDepth / 2) * A.shellScale;
+    const r = CAKE_RADIUS + (isTop ? -halfDepth : halfDepth) + (cfg.radialOffset || 0);
+    const step = A.shellScale * A.bbWidth * 0.9 * (cfg.spacing ?? 1);
+    let count = Math.max(6, Math.round((2 * Math.PI * r) / step));
+    const Ln = pattern.length || 1; count = Math.max(Ln, Math.ceil(count / Ln) * Ln);
+    return Array.from({ length: count }, (_, i) => {
+      const a = (i / count) * Math.PI * 2;
+      return { pos: [Math.cos(a) * r, anchorY + (cfg.yOffset || 0), Math.sin(a) * r], rotY: a };
+    });
+  }, [A, isTop, cfg.radialOffset, cfg.spacing, cfg.yOffset, anchorY, pattern]);
+  if (!A) return null;
+  const ryA = cfg.ry * DEG, meshA = [cfg.rx * DEG, 0, cfg.rz * DEG];
+  const ryB = cfg.altRy * DEG, meshB = [cfg.altRx * DEG, 0, cfg.altRz * DEG];
+  const dRadialB = (cfg.altRadialOffset || 0) - (cfg.radialOffset || 0);
+  const dYB      = (cfg.altYOffset || 0) - (cfg.yOffset || 0);
+  return (
+    <group>
+      {/* board / drum — metallic finish so a gold board reads as gold */}
+      <mesh position={[0, Y_BASE / 2, 0]}>
+        <cylinderGeometry args={[CAKE_RADIUS * 1.32, CAKE_RADIUS * 1.32, Y_BASE, 56]} />
+        <meshStandardMaterial color={boardColor} roughness={0.25} metalness={0.7} />
+      </mesh>
+      {/* cake body */}
+      <mesh position={[0, Y_BASE + CAKE_HEIGHT / 2, 0]}>
+        <cylinderGeometry args={[CAKE_RADIUS, CAKE_RADIUS, CAKE_HEIGHT, 48]} />
+        <meshStandardMaterial color={cakeColor} roughness={0.85} />
+      </mesh>
+      {/* top cap */}
+      <mesh position={[0, Y_BASE + CAKE_HEIGHT + 0.005, 0]}>
+        <cylinderGeometry args={[CAKE_RADIUS - 0.01, CAKE_RADIUS - 0.01, 0.01, 48]} />
+        <meshStandardMaterial color={capColor} roughness={0.7} />
+      </mesh>
+      {/* piping ring */}
+      {positions.map((u, i) => {
+        const isB = B && pattern[i % L] === 'B';
+        const ver = isB ? B : A;
+        let pos = u.pos;
+        if (isB && (dRadialB || dYB)) {
+          const len = Math.hypot(pos[0], pos[2]) || 1;
+          pos = [pos[0] + (pos[0] / len) * dRadialB, pos[1] + dYB, pos[2] + (pos[2] / len) * dRadialB];
+        }
+        return (
+          <group key={i} position={pos} rotation={[0, -u.rotY + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
+            <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale}>
+              <meshPhysicalMaterial color={color} roughness={0.85} sheen={0.4} sheenRoughness={0.9} sheenColor={color} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
   );
 }
 
@@ -230,7 +386,7 @@ function CakeScene() {
 }
 
 // ── Slider row ────────────────────────────────────────────────────────────────
-function Slider({ label, value, min, max, step = 1, onChange, color = '#3D5A44' }) {
+function Slider({ label, value, min, max, step = 1, onChange, color = '#3D5A44', resetTo = 0 }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
       <span style={{ fontSize: 11, fontWeight: 700, color, minWidth: 90, fontFamily: "'Quicksand',sans-serif" }}>{label}</span>
@@ -240,9 +396,9 @@ function Slider({ label, value, min, max, step = 1, onChange, color = '#3D5A44' 
       <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 46, textAlign: 'right', fontFamily: "'Quicksand',sans-serif" }}>
         {typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(2) : value}
       </span>
-      <button onClick={() => onChange(0)}
+      <button onClick={() => onChange(resetTo)}
         style={{ fontSize: 10, padding: '2px 6px', border: '1px solid #C5D4C8', borderRadius: 4, background: '#fff', cursor: 'pointer', color: '#9BB5A2', fontFamily: "'Quicksand',sans-serif" }}>
-        0
+        {resetTo}
       </button>
     </div>
   );
@@ -254,31 +410,59 @@ const DEFAULT_TARGET_CFG = {
   rx: 0, ry: 0, rz: 0,
   radialOffset: 0,
   yOffset:      0,
+  spacing:      1,   // shell gap multiplier: 1 = touching/default, >1 = wider gaps (fewer shells)
   swagCount:    0,   // festoons around the ring (0 = flat ring, no swag). 2–3 = big U drapes.
   swagDepth:    0.4, // how far each festoon hangs (cake units)
   swagTilt:     0.4, // how strongly shells lean to follow the drape (0–1; ~0.4 looks best)
   bend:         false, // bend the whole strip into U festoons (one strip = one U swag)
   festoons:     6,   // how many U swags around the cake (1 = one big U at the front)
   bendDepth:    0.4, // how far each U belly hangs below the attachment ends (cake units)
+  // Alternating pattern — version B (the "alternate") + its own transform + the repeat ratio.
+  altEnabled:   false,
+  altFlip:      false,
+  altRx: 0, altRy: 0, altRz: 0,
+  altRadialOffset: 0,
+  altYOffset:   0,
+  patternA:     1,   // originals per cycle
+  patternB:     1,   // alternates per cycle
 };
+
+// Build the repeating cycle string (e.g. A=2,B=1 → "AAB"). Always ≥1 of each.
+function patternStr(c) {
+  return 'A'.repeat(Math.max(1, c.patternA || 1)) + 'B'.repeat(Math.max(1, c.patternB || 1));
+}
 
 // Map one edited config to its placement_config section. board → bottom_*, rim → top_*.
 // These are the exact keys the designer's pipingPlacementFromConfig() reads.
 function sectionFor(prefix, c) {
-  return {
+  const base = {
     [`${prefix}_flip`]:          c.flipBottom,
     [`${prefix}_rotation`]:      [Math.round(c.rx), Math.round(c.ry), Math.round(c.rz)],
     [`${prefix}_radial_offset`]: +c.radialOffset.toFixed(3),
     [`${prefix}_y_offset`]:      +c.yOffset.toFixed(3),
+    [`${prefix}_spacing`]:       +(c.spacing ?? 1).toFixed(2),
     [`${prefix}_swag_count`]:    Math.round(c.swagCount),
     [`${prefix}_swag_depth`]:    +c.swagDepth.toFixed(3),
     [`${prefix}_swag_tilt`]:     +c.swagTilt.toFixed(2),
+  };
+  if (!c.altEnabled) return base;
+  // Alternate version B (its GLB url is set during upload in Manage Elements, not here).
+  return {
+    ...base,
+    [`${prefix}_alt_enabled`]:      true,
+    [`${prefix}_alt_flip`]:         c.altFlip,
+    [`${prefix}_alt_rotation`]:     [Math.round(c.altRx), Math.round(c.altRy), Math.round(c.altRz)],
+    [`${prefix}_alt_radial_offset`]: +c.altRadialOffset.toFixed(3),
+    [`${prefix}_alt_y_offset`]:      +c.altYOffset.toFixed(3),
+    [`${prefix}_pattern`]:           patternStr(c),
   };
 }
 
 export default function PipingCalibrator() {
   const [file, setFile]     = useState(null);
   const [blobUrl, setBlobUrl] = useState(null);
+  const [altFile, setAltFile]     = useState(null);   // alternate shape (version B) GLB
+  const [altBlobUrl, setAltBlobUrl] = useState(null);
   const [showRing, setShowRing] = useState(false);
   const [target, setTarget] = useState('board'); // which config the sliders edit: 'board' | 'rim'
 
@@ -292,8 +476,86 @@ export default function PipingCalibrator() {
   const [includeBoard, setIncludeBoard] = useState(true);
   const [includeRim,   setIncludeRim]   = useState(true);
 
+  // ── Create-pattern mode: load an existing block element from the library by id,
+  // tune the alternating pattern against its R2 GLB, capture a building-block thumbnail,
+  // and save a new piping_pattern element that references the block (no new file). ──
+  const [mode, setMode]           = useState('tune'); // 'tune' | 'pattern'
+  const [allElements, setAllElements]       = useState([]);
+  const [elementTypesList, setElementTypesList] = useState([]);
+  const [blockId, setBlockId]     = useState('');
+  const [block, setBlock]         = useState(null);   // resolved element { id, name, image_url, ... }
+  const [patternName, setPatternName] = useState('');
+  const [creating, setCreating]   = useState(false);
+  const [msg, setMsg]             = useState(null);
+  const captureRef = useRef(null);
+
   const cfg    = target === 'board' ? boardCfg : rimCfg;
   const setCfg = target === 'board' ? setBoardCfg : setRimCfg;
+
+  // GLB the preview/capture renders: the loaded block in pattern mode, else the upload.
+  const activeGlbUrl = mode === 'pattern' ? (block?.image_url ?? null) : blobUrl;
+
+  // Lazy-load the element library + types the first time we enter pattern mode.
+  useEffect(() => {
+    if (mode !== 'pattern' || allElements.length) return;
+    Promise.all([fetchAllElements(), fetchElementTypes()])
+      .then(([els, types]) => { setAllElements(els); setElementTypesList(types); })
+      .catch(e => setMsg({ ok: false, text: e.message }));
+  }, [mode, allElements.length]);
+
+  function loadBlock() {
+    const el = allElements.find(e => e.id === blockId.trim());
+    if (!el) { setMsg({ ok: false, text: 'No element found with that id.' }); return; }
+    setBlock(el);
+    setPatternName(`${el.name} Pattern`);
+    setBoardCfg(p => ({ ...p, altEnabled: true }));
+    setRimCfg(p => ({ ...p, altEnabled: true }));
+    setShowRing(true);
+    setMsg({ ok: true, text: `Loaded "${el.name}".` });
+  }
+
+  async function createPattern() {
+    if (!block) { setMsg({ ok: false, text: 'Load a block element first.' }); return; }
+    if (!patternName.trim()) { setMsg({ ok: false, text: 'Pattern name is required.' }); return; }
+    const ptype = elementTypesList.find(t => t.slug === 'piping_pattern');
+    if (!ptype) { setMsg({ ok: false, text: 'No "piping_pattern" element type exists yet — create it first.' }); return; }
+    const zones = [...(includeBoard ? ['board'] : []), ...(includeRim ? ['rim'] : [])];
+    if (!zones.length) { setMsg({ ok: false, text: 'Include at least one zone (Board / Rim).' }); return; }
+    setCreating(true); setMsg(null);
+    try {
+      // Capture the building-block thumbnail → normalize → upload (store the R2 key).
+      const canvas = captureRef.current?.querySelector('canvas');
+      if (!canvas) throw new Error('Thumbnail preview not ready — try again.');
+      const raw = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      const thumb = await normalizeThumbnail(raw);
+      const tfn = `${crypto.randomUUID()}.png`;
+      const { url, key: thumbKey } = await getSignedUploadUrl('elements/thumbnails', tfn, 'image/png');
+      await uploadToR2(url, thumb);
+
+      // MVP: both parts reference the SAME block (self-alternate). Two-file later just
+      // points part B at a different element id — same shape, no structural change.
+      const placement_config = {
+        ...(includeBoard ? sectionFor('bottom', boardCfg) : {}),
+        ...(includeRim   ? sectionFor('top',    rimCfg)   : {}),
+        parts: [{ element_id: block.id }, { element_id: block.id }],
+      };
+      await createGlobalElement({
+        name:             patternName.trim(),
+        element_type_id:  ptype.id,
+        image_url:        null,           // patterns own no file — they reference blocks
+        thumbnail_url:    thumbKey,
+        allowed_zones:    zones,
+        placement_config,
+        allowed_actions:  { resize: true, duplicate: true, color: true, delete: true },
+        sort_order:       0,
+      });
+      setMsg({ ok: true, text: `Pattern "${patternName.trim()}" created.` });
+    } catch (e) {
+      setMsg({ ok: false, text: e.message });
+    } finally {
+      setCreating(false);
+    }
+  }
 
   useEffect(() => {
     if (!file) return;
@@ -301,6 +563,13 @@ export default function PipingCalibrator() {
     setBlobUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [file]);
+
+  useEffect(() => {
+    if (!altFile) { setAltBlobUrl(null); return; }
+    const url = URL.createObjectURL(altFile);
+    setAltBlobUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [altFile]);
 
   function set(key) { return v => setCfg(prev => ({ ...prev, [key]: v })); }
 
@@ -318,19 +587,57 @@ export default function PipingCalibrator() {
       {/* ── Left: controls ─────────────────────────────────────────────── */}
       <div style={{ width: 320, flexShrink: 0, overflowY: 'auto', background: '#fff', borderRight: '1.5px solid #E8EFE9', padding: 20, position: 'relative', zIndex: 10 }}>
 
-        <div style={{ fontSize: 15, fontWeight: 800, color: '#2C4433', marginBottom: 16 }}>Piping Calibrator</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: '#2C4433', marginBottom: 12 }}>Piping Calibrator</div>
 
-        {/* GLB upload */}
-        <label style={{ display: 'block', marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', marginBottom: 4 }}>GLB File</div>
-          <div style={{ border: '2px dashed #C5D4C8', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', background: '#F4F8F5', fontSize: 12, color: '#9BB5A2', textAlign: 'center' }}>
-            {file ? file.name : 'Click to pick .glb file'}
-            <input type="file" accept=".glb,.gltf" style={{ display: 'none' }}
-              onChange={e => { if (e.target.files[0]) setFile(e.target.files[0]); }} />
+        {/* Mode: tune a local GLB (copy JSON) vs create a pattern from a library element */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+          {[{ v: 'tune', label: 'Tune (upload)' }, { v: 'pattern', label: 'Create Pattern' }].map(({ v, label }) => (
+            <button key={v} onClick={() => setMode(v)}
+              style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: `2px solid ${mode === v ? '#9B5F72' : '#C5D4C8'}`, background: mode === v ? '#9B5F72' : '#fff', color: mode === v ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'tune' ? (
+          /* GLB upload */
+          <label style={{ display: 'block', marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', marginBottom: 4 }}>GLB File</div>
+            <div style={{ border: '2px dashed #C5D4C8', borderRadius: 8, padding: '10px 14px', cursor: 'pointer', background: '#F4F8F5', fontSize: 12, color: '#9BB5A2', textAlign: 'center' }}>
+              {file ? file.name : 'Click to pick .glb file'}
+              <input type="file" accept=".glb,.gltf" style={{ display: 'none' }}
+                onChange={e => { if (e.target.files[0]) setFile(e.target.files[0]); }} />
+            </div>
+          </label>
+        ) : (
+          /* Load an existing building-block element by id (loads its GLB from R2) */
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74', marginBottom: 4 }}>Building-block element id</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input value={blockId} onChange={e => setBlockId(e.target.value)} placeholder="paste cream_piping element id"
+                style={{ flex: 1, fontSize: 11, padding: '8px 10px', borderRadius: 6, border: '1.5px solid #C5D4C8', fontFamily: 'monospace' }} />
+              <button onClick={loadBlock}
+                style={{ fontSize: 11, padding: '0 12px', borderRadius: 6, border: '2px solid #3D5A44', background: '#3D5A44', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>
+                Load
+              </button>
+            </div>
+            {block && (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: '#3D5A44', fontWeight: 700, marginBottom: 4 }}>Loaded: {block.name}</div>
+                <input value={patternName} onChange={e => setPatternName(e.target.value)} placeholder="Pattern name"
+                  style={{ width: '100%', fontSize: 12, padding: '8px 10px', borderRadius: 6, border: '1.5px solid #C5D4C8', boxSizing: 'border-box' }} />
+              </div>
+            )}
           </div>
-        </label>
+        )}
 
-        {blobUrl && (
+        {msg && (
+          <div style={{ marginBottom: 12, fontSize: 11, fontWeight: 700, padding: '8px 10px', borderRadius: 6, background: msg.ok ? '#EAF3EC' : '#FBEAEA', color: msg.ok ? '#3D5A44' : '#A23B3B' }}>
+            {msg.text}
+          </div>
+        )}
+
+        {activeGlbUrl && (
           <>
             {/* Target: rim (top edge) vs board (base) */}
             <div style={{ marginBottom: 12 }}>
@@ -364,6 +671,11 @@ export default function PipingCalibrator() {
             <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>Position</div>
             <Slider label="Radial offset" value={cfg.radialOffset} min={-0.3} max={0.5} step={0.01} onChange={set('radialOffset')} />
             <Slider label="Y offset" value={cfg.yOffset} min={-0.2} max={1.2} step={0.01} onChange={set('yOffset')} />
+            <Slider label="Spacing" value={cfg.spacing} min={0.5} max={2.5} step={0.05} resetTo={1} onChange={set('spacing')} />
+            <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
+              Gap between shells. 1 = touching (default). Higher = wider gaps & fewer shells.
+              Set the <b>Rim</b>’s spacing higher to match the <b>Board</b>’s wider gap.
+            </div>
 
             {/* Bend into U — bend the whole strip into draped U swags */}
             <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Bend into U (swag)</div>
@@ -417,6 +729,58 @@ export default function PipingCalibrator() {
               {cfg.swagCount > 0 && !showRing && <><br/>Turn on “Show full ring” to see the swag.</>}
             </div>
 
+            {/* Alternating pattern — version B alternates with the original around the ring */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Alternating pattern</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Alternate a 2nd shape</span>
+              <button onClick={() => { setCfg(p => ({ ...p, altEnabled: !p.altEnabled })); if (!cfg.altEnabled) setShowRing(true); }}
+                style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: `2px solid ${cfg.altEnabled ? '#3D5A44' : '#C5D4C8'}`, background: cfg.altEnabled ? '#3D5A44' : '#fff', color: cfg.altEnabled ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700 }}>
+                {cfg.altEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            {cfg.altEnabled && <>
+              {/* Alternate shape GLB (optional — falls back to the main shape) */}
+              <label style={{ display: 'block', marginBottom: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', marginBottom: 4 }}>Alternate shape GLB (optional — defaults to main)</div>
+                <div style={{ border: '2px dashed #C5D4C8', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', background: '#F4F8F5', fontSize: 11, color: '#9BB5A2', textAlign: 'center' }}>
+                  {altFile ? altFile.name : 'Click to pick alternate .glb'}
+                  <input type="file" accept=".glb,.gltf" style={{ display: 'none' }}
+                    onChange={e => { if (e.target.files[0]) setAltFile(e.target.files[0]); }} />
+                </div>
+              </label>
+              {/* Pattern ratio */}
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginBottom: 8 }}>
+                {[{ key: 'patternA', label: 'Originals' }, { key: 'patternB', label: 'Alternates' }].map(({ key, label }) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>{label}</span>
+                    <button onClick={() => setCfg(p => ({ ...p, [key]: Math.max(1, (p[key] || 1) - 1) }))}
+                      style={{ width: 22, height: 22, borderRadius: 5, border: '1.5px solid #C5D4C8', background: '#fff', cursor: 'pointer', color: '#3D5A44', fontWeight: 700 }}>−</button>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: '#2C4433', minWidth: 14, textAlign: 'center' }}>{cfg[key]}</span>
+                    <button onClick={() => setCfg(p => ({ ...p, [key]: Math.min(6, (p[key] || 1) + 1) }))}
+                      style={{ width: 22, height: 22, borderRadius: 5, border: '1.5px solid #C5D4C8', background: '#fff', cursor: 'pointer', color: '#3D5A44', fontWeight: 700 }}>+</button>
+                  </div>
+                ))}
+                <span style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', fontFamily: 'monospace' }}>{patternStr(cfg)}</span>
+              </div>
+              {/* Alternate transform */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Alt flip (180° X)</span>
+                <button onClick={() => setCfg(p => ({ ...p, altFlip: !p.altFlip }))}
+                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: `2px solid ${cfg.altFlip ? '#3D5A44' : '#C5D4C8'}`, background: cfg.altFlip ? '#3D5A44' : '#fff', color: cfg.altFlip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700 }}>
+                  {cfg.altFlip ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <Slider label="Alt X rotation" value={cfg.altRx} min={-180} max={180} onChange={set('altRx')} color="#e05252" />
+              <Slider label="Alt Y rotation" value={cfg.altRy} min={-180} max={180} onChange={set('altRy')} color="#52c452" />
+              <Slider label="Alt Z rotation" value={cfg.altRz} min={-180} max={180} onChange={set('altRz')} color="#5252e0" />
+              <Slider label="Alt radial" value={cfg.altRadialOffset} min={-0.3} max={0.5} step={0.01} onChange={set('altRadialOffset')} />
+              <Slider label="Alt Y offset" value={cfg.altYOffset} min={-0.2} max={1.2} step={0.01} onChange={set('altYOffset')} />
+              <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
+                Version B alternates with the original per the ratio above. The alternate GLB url is set
+                when you upload it in <b>Manage Elements</b>; here you only tune B's transform + pattern.
+              </div>
+            </>}
+
             {/* Ring toggle */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Show full ring</span>
@@ -441,21 +805,37 @@ export default function PipingCalibrator() {
               </div>
             </div>
 
-            {/* Values readout */}
-            <div style={{ marginTop: 20, background: '#F4F8F5', border: '1.5px solid #C5D4C8', borderRadius: 10, padding: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#3D5A44', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 }}>Values to share</div>
-              <pre style={{ fontSize: 12, color: '#2C4433', margin: 0, fontFamily: 'monospace', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{valuesJson}</pre>
-              <button onClick={() => navigator.clipboard?.writeText(valuesJson)}
-                style={{ marginTop: 10, width: '100%', padding: '8px 0', background: '#3D5A44', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Quicksand',sans-serif" }}>
-                Copy to clipboard
-              </button>
-            </div>
+            {/* Output — copy JSON (tune) or create a pattern element (pattern mode) */}
+            {mode === 'tune' ? (
+              <div style={{ marginTop: 20, background: '#F4F8F5', border: '1.5px solid #C5D4C8', borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#3D5A44', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 }}>Values to share</div>
+                <pre style={{ fontSize: 12, color: '#2C4433', margin: 0, fontFamily: 'monospace', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{valuesJson}</pre>
+                <button onClick={() => navigator.clipboard?.writeText(valuesJson)}
+                  style={{ marginTop: 10, width: '100%', padding: '8px 0', background: '#3D5A44', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Quicksand',sans-serif" }}>
+                  Copy to clipboard
+                </button>
+              </div>
+            ) : (
+              <div style={{ marginTop: 20, background: '#F7F0F3', border: '1.5px solid #E2C9D3', borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8 }}>Create pattern element</div>
+                <div style={{ fontSize: 10, color: '#9BB5A2', marginBottom: 8, lineHeight: 1.5 }}>
+                  Saves a new <code>piping_pattern</code> element referencing this block, with the
+                  tuned A/B pattern and a captured building-block thumbnail. No new file is uploaded.
+                </div>
+                <button onClick={createPattern} disabled={creating || !block}
+                  style={{ width: '100%', padding: '9px 0', background: (creating || !block) ? '#d8c2cb' : '#9B5F72', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: (creating || !block) ? 'default' : 'pointer', fontFamily: "'Quicksand',sans-serif" }}>
+                  {creating ? 'Creating…' : 'Create Pattern'}
+                </button>
+              </div>
+            )}
           </>
         )}
 
-        {!blobUrl && (
+        {!activeGlbUrl && (
           <div style={{ marginTop: 20, padding: 16, background: '#F4F8F5', borderRadius: 10, fontSize: 12, color: '#9BB5A2', lineHeight: 1.6, border: '1.5px dashed #C5D4C8' }}>
-            Upload a GLB file to start. Use the Board / Rim selector to tune each ring — both render together on the cake. Tick which zones to include, then share the "Values" box.
+            {mode === 'tune'
+              ? 'Upload a GLB file to start. Tune each ring (Board / Rim), tick which zones to include, then share the "Values" box.'
+              : 'Paste a building-block element id and hit Load. Tune the alternating pattern, then Create Pattern to save it.'}
           </div>
         )}
       </div>
@@ -473,22 +853,38 @@ export default function PipingCalibrator() {
 
           <Suspense fallback={null}>
             {/* Both rings render together; a ring shows when it's included OR being edited. */}
-            {blobUrl && (includeBoard || target === 'board') && (
-              <CalibScene glbUrl={blobUrl} cfg={boardCfg} showRing={showRing} anchorY={Y_BASE} inward={false} />
+            {activeGlbUrl && (includeBoard || target === 'board') && (
+              <CalibScene glbUrl={activeGlbUrl} cfg={boardCfg} showRing={showRing} anchorY={Y_BASE} inward={false} altGlbUrl={altBlobUrl} />
             )}
-            {blobUrl && (includeRim || target === 'rim') && (
-              <CalibScene glbUrl={blobUrl} cfg={rimCfg} showRing={showRing} anchorY={Y_BASE + CAKE_HEIGHT} inward={true} />
+            {activeGlbUrl && (includeRim || target === 'rim') && (
+              <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing={showRing} anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} />
             )}
           </Suspense>
 
           <OrbitControls makeDefault target={[0, 2, 0]} />
         </Canvas>
 
-        {!blobUrl && (
+        {!activeGlbUrl && (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
             <div style={{ background: 'rgba(255,255,255,0.85)', borderRadius: 12, padding: '16px 24px', fontSize: 13, color: '#9BB5A2', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-              Upload a GLB to see the piece on the cake
+              {mode === 'tune' ? 'Upload a GLB to see the piece on the cake' : 'Load a building-block element to start'}
             </div>
+          </div>
+        )}
+
+        {/* Hidden building-block capture canvas (pattern mode) — one cycle, transparent bg */}
+        {mode === 'pattern' && activeGlbUrl && (
+          <div ref={captureRef} style={{ position: 'absolute', left: -9999, top: -9999, width: 512, height: 512 }}>
+            <Canvas gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 0.18, 1.7], fov: 34 }} style={{ width: 512, height: 512, background: 'transparent' }}>
+              <ambientLight intensity={0.95} />
+              <directionalLight position={[3, 5, 5]} intensity={1.2} />
+              <directionalLight position={[-3, 2, 1]} intensity={0.4} />
+              <Suspense fallback={null}>
+                <Environment preset="apartment" />
+                <BuildingBlockScene glbUrl={activeGlbUrl} altGlbUrl={null} cfg={target === 'rim' ? rimCfg : boardCfg} />
+              </Suspense>
+              <OrbitControls target={[0, 0.14, 0]} enableZoom={false} enablePan={false} enableRotate={false} />
+            </Canvas>
           </div>
         )}
       </div>
