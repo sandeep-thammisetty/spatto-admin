@@ -598,10 +598,11 @@ export default function ManageElements() {
         updates.placement_config = parsedConfig;
       }
 
-      // Upload new thumbnail only when explicitly saving with thumbnail → always a new R2 key.
-      // Data-only saves leave the existing thumbnail_url untouched (column not overwritten,
-      // not nulled) so we don't burn remove.bg credits on routine edits.
-      if (withThumbnail && newThumbBlob) {
+      // Upload a NEW thumbnail whenever one has been staged — captured from the canvas OR
+      // uploaded manually. Either is an explicit change, so both Save buttons persist it (the
+      // remove.bg credit, if any, was already spent at capture time, not here). Without a staged
+      // blob the existing thumbnail_url is left untouched, so routine data edits keep their image.
+      if (newThumbBlob) {
         const filename = `${crypto.randomUUID()}.png`;
         const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
         await uploadToR2(url, newThumbBlob);
@@ -1237,10 +1238,12 @@ export default function ManageElements() {
                     </div>
                   )}
 
-                  {/* Replace thumbnail drop zone */}
+                  {/* Replace thumbnail drop zone — a manually uploaded image is already final, so
+                      use it as-is (no remove.bg; that's only for cutting the 3D-render background
+                      on a captured thumbnail). Matches AddElement's custom-thumbnail upload. */}
                   <label style={{ ...s.fileBox, padding: '12px 16px', marginTop: 6 }}>
                     <input type="file" accept="image/*" style={{ display: 'none' }}
-                      onChange={e => { if (e.target.files[0]) processRemoveBg(e.target.files[0]); }} />
+                      onChange={e => { if (e.target.files[0]) setNewThumbBlob(e.target.files[0]); }} />
                     <span style={{ fontSize: 12, color: '#6B8C74', fontWeight: 600 }}>
                       {newThumbBlob ? 'Replace thumbnail again…' : 'Replace thumbnail…'}
                     </span>

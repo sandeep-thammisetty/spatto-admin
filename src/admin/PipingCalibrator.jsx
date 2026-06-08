@@ -120,7 +120,9 @@ function bakeStrip(scene, flip) {
   return src;
 }
 
-function bendOneFestoon(srcGeo, { th0, span, depth, attachY, radius }) {
+// `tilt` (radians) ROLLS each segment about the rope's length so the strip leans instead of
+// facing dead-on — the natural draped look of a piped rope swag (vs a flat-facing ribbon).
+function bendOneFestoon(srcGeo, { th0, span, depth, attachY, radius, tilt = 0 }) {
   const g = srcGeo.clone();
   g.computeBoundingBox();
   const bb = g.boundingBox, min = bb.min.clone(), size = new THREE.Vector3(); bb.getSize(size);
@@ -134,6 +136,7 @@ function bendOneFestoon(srcGeo, { th0, span, depth, attachY, radius }) {
   const cOut = min[outAxis] + size[outAxis] / 2, cW = min[widthAxis] + size[widthAxis] / 2;
   const outHalf = (size[outAxis] / 2) * uscale;
   const R = radius + outHalf; // sit proud of the wall
+  const ct = Math.cos(tilt), st = Math.sin(tilt);
   const pos = g.attributes.position, v = new THREE.Vector3();
   const curve = t => {
     const th = th0 + (t - 0.5) * span;
@@ -146,8 +149,11 @@ function bendOneFestoon(srcGeo, { th0, span, depth, attachY, radius }) {
     const oOut = (comp[outAxis] - cOut) * uscale, oW = (comp[widthAxis] - cW) * uscale;
     const cur = curve(t), nxt = curve(Math.min(1, t + 1e-3)), prv = curve(Math.max(0, t - 1e-3));
     const T = new THREE.Vector3().subVectors(nxt.p, prv.p).normalize();      // tangent along the U
-    const Rhat = new THREE.Vector3(Math.cos(cur.th), 0, Math.sin(cur.th));   // radial out (bumps)
-    const B = new THREE.Vector3().crossVectors(T, Rhat).normalize();         // in-wall perpendicular
+    const Rhat0 = new THREE.Vector3(Math.cos(cur.th), 0, Math.sin(cur.th));  // radial out (bumps)
+    const B0 = new THREE.Vector3().crossVectors(T, Rhat0).normalize();       // in-wall perpendicular
+    // Roll the (out, width) cross-section frame about the tangent by `tilt` → the lean.
+    const Rhat = Rhat0.clone().multiplyScalar(ct).addScaledVector(B0, st);
+    const B    = B0.clone().multiplyScalar(ct).addScaledVector(Rhat0, -st);
     v.copy(cur.p).addScaledVector(Rhat, oOut).addScaledVector(B, oW);
     pos.setXYZ(i, v.x, v.y, v.z);
   }
@@ -156,12 +162,12 @@ function bendOneFestoon(srcGeo, { th0, span, depth, attachY, radius }) {
   return g;
 }
 
-function buildFestoons(scene, { flip, festoons, depth, attachY, radius, spread = 0.96 }) {
+function buildFestoons(scene, { flip, festoons, depth, attachY, radius, spread = 0.96, tilt = 0 }) {
   const src = bakeStrip(scene, flip);
   if (!src) return [];
   const span = (2 * Math.PI / festoons) * spread; // each U spans its share of the ring (small gap)
   return Array.from({ length: festoons }, (_, k) =>
-    bendOneFestoon(src, { th0: Math.PI / 2 + k * (2 * Math.PI / festoons), span, depth, attachY, radius }));
+    bendOneFestoon(src, { th0: Math.PI / 2 + k * (2 * Math.PI / festoons), span, depth, attachY, radius, tilt }));
 }
 
 // ── same extractGeo as CakeTier ───────────────────────────────────────────────
@@ -240,6 +246,8 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
   }, [A, cfg.radialOffset, cfg.yOffset, cfg.spacing, cfg.swagCount, cfg.swagDepth, cfg.swagTilt, anchorY, inward, altActive, pattern, isRect, shape]);
 
   // Bend mode: deform the whole strip into U festoons draped on the wall (round-only).
+  // `bendRing` tiles them edge-to-edge (spread 1.0) into ONE continuous ring; otherwise
+  // they're separate swags with a small gap between each (spread 0.96).
   const festoonGeos = useMemo(() => {
     if (!cfg.bend || isRect) return null;
     return buildFestoons(scene, {
@@ -248,8 +256,10 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
       depth: cfg.bendDepth,
       attachY: anchorY + cfg.yOffset,
       radius: CAKE_RADIUS + cfg.radialOffset,
+      spread: cfg.bendRing ? 1.0 : 0.96,
+      tilt: (cfg.bendTilt ?? 0) * DEG,
     });
-  }, [scene, cfg.bend, cfg.festoons, cfg.bendDepth, cfg.yOffset, cfg.radialOffset, anchorY, isRect]);
+  }, [scene, cfg.bend, cfg.bendRing, cfg.festoons, cfg.bendDepth, cfg.bendTilt, cfg.yOffset, cfg.radialOffset, anchorY, isRect]);
 
   if (!A) return null;
 
@@ -433,7 +443,10 @@ export function PatternCakeThumb({
 
 // ── Cake + board backdrop ─────────────────────────────────────────────────────
 // `shape` null → round cylinder; { kind:'rect', halfW, halfD, cornerR } → sheet cake.
-function CakeScene({ shape = null }) {
+// Default cake body colour — the picker's starting value and its "Reset" target.
+const STANDARD_CAKE_COLOR = '#f5c6d0';
+
+function CakeScene({ shape = null, floor = true, cakeColor = STANDARD_CAKE_COLOR }) {
   const isRect = shape?.kind === 'rect';
   return (
     <>
@@ -445,7 +458,7 @@ function CakeScene({ shape = null }) {
           </RoundedBox>
           {/* Sheet cake body */}
           <RoundedBox position={[0, Y_BASE + CAKE_HEIGHT / 2, 0]} args={[shape.halfW * 2, CAKE_HEIGHT, shape.halfD * 2]} radius={shape.cornerR} smoothness={4} castShadow receiveShadow>
-            <meshStandardMaterial color="#f5c6d0" roughness={0.68} />
+            <meshStandardMaterial color={cakeColor} roughness={0.68} />
           </RoundedBox>
         </>
       ) : (
@@ -458,15 +471,18 @@ function CakeScene({ shape = null }) {
           {/* Cake */}
           <mesh position={[0, Y_BASE + CAKE_HEIGHT / 2, 0]} castShadow receiveShadow>
             <cylinderGeometry args={[CAKE_RADIUS, CAKE_RADIUS, CAKE_HEIGHT, 64]} />
-            <meshStandardMaterial color="#f5c6d0" roughness={0.68} />
+            <meshStandardMaterial color={cakeColor} roughness={0.68} />
           </mesh>
         </>
       )}
-      {/* Floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-        <planeGeometry args={[20, 20]} />
-        <meshStandardMaterial color="#f0ebe5" roughness={0.9} />
-      </mesh>
+      {/* Floor — opaque ground for the live preview; omitted in the thumbnail capture so the
+          shot crops cleanly to the cake + piping (no big floor plane filling the frame). */}
+      {floor && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+          <planeGeometry args={[20, 20]} />
+          <meshStandardMaterial color="#f0ebe5" roughness={0.9} />
+        </mesh>
+      )}
     </>
   );
 }
@@ -501,8 +517,10 @@ const DEFAULT_TARGET_CFG = {
   swagDepth:    0.4, // how far each festoon hangs (cake units)
   swagTilt:     0.4, // how strongly shells lean to follow the drape (0–1; ~0.4 looks best)
   bend:         false, // bend the whole strip into U festoons (one strip = one U swag)
+  bendRing:     false, // tile the bent strips edge-to-edge (no gap) into ONE continuous garland
   festoons:     6,   // how many U swags around the cake (1 = one big U at the front)
   bendDepth:    0.4, // how far each U belly hangs below the attachment ends (cake units)
+  bendTilt:     30,  // degrees the strip rolls about its length → the draped lean (0 = face-on)
   // Alternating pattern — version B (the "alternate") + its own transform + the repeat ratio.
   altEnabled:   false,
   altFlip:      false,
@@ -530,6 +548,14 @@ function sectionFor(prefix, c) {
     [`${prefix}_swag_count`]:    Math.round(c.swagCount),
     [`${prefix}_swag_depth`]:    +c.swagDepth.toFixed(3),
     [`${prefix}_swag_tilt`]:     +c.swagTilt.toFixed(2),
+    // Bend (U-shaped festoon) — only written when on, so non-bend elements stay clean.
+    ...(c.bend ? {
+      [`${prefix}_bend`]:        true,
+      [`${prefix}_bend_ring`]:   !!c.bendRing,
+      [`${prefix}_festoons`]:    Math.round(c.festoons),
+      [`${prefix}_bend_depth`]:  +c.bendDepth.toFixed(3),
+      [`${prefix}_bend_tilt`]:   Math.round(c.bendTilt ?? 0),
+    } : {}),
   };
   if (!c.altEnabled) return base;
   // Alternate version B (its GLB url is set during upload in Manage Elements, not here).
@@ -569,7 +595,9 @@ export default function PipingCalibrator() {
 
   // Which sections get written to the output JSON — board-only / rim-only / both.
   const [includeBoard, setIncludeBoard] = useState(true);
-  const [includeRim,   setIncludeRim]   = useState(true);
+  // Rim starts OFF so a freshly uploaded GLB only shows on the board — the rim ring appears
+  // when its zone is ticked or its tab is opened (render gate: includeRim || target === 'rim').
+  const [includeRim,   setIncludeRim]   = useState(false);
 
   // ── Create-pattern mode: load an existing block element from the library by id,
   // tune the alternating pattern against its R2 GLB, capture a building-block thumbnail,
@@ -583,9 +611,28 @@ export default function PipingCalibrator() {
   const [creating, setCreating]   = useState(false);
   const [msg, setMsg]             = useState(null);
   const captureRef = useRef(null);
+  const thumbRef = useRef(null);
+  // Cake body colour (picker) — drives both the live preview and the captured thumbnail.
+  const [cakeColor, setCakeColor] = useState(STANDARD_CAKE_COLOR);
 
   const cfg    = target === 'board' ? boardCfg : rimCfg;
   const setCfg = target === 'board' ? setBoardCfg : setRimCfg;
+
+  // Capture a clean element thumbnail from the dedicated offscreen canvas — transparent
+  // background, no floor — then crop it to the cake + piping with normalizeThumbnail (the same
+  // crop the pattern thumbnails use) and download. Faithful to the tuned look (bend included),
+  // but framed/cropped like the originals instead of grabbing the whole live canvas.
+  async function captureScreenshot() {
+    const canvas = thumbRef.current?.querySelector('canvas');
+    if (!canvas) { setMsg({ ok: false, text: 'Thumbnail preview not ready — try again.' }); return; }
+    const raw = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    const thumb = await normalizeThumbnail(raw);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(thumb);
+    a.download = `piping-${target}-${Date.now()}.png`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
 
   // GLB the preview/capture renders: the loaded block in pattern mode, else the upload.
   const activeGlbUrl = mode === 'pattern' ? (block?.image_url ?? null) : blobUrl;
@@ -775,6 +822,21 @@ export default function PipingCalibrator() {
               </div>
             </div>
 
+            {/* Cake colour — drives the live preview and the captured thumbnail */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Cake colour</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="color" value={cakeColor} onChange={e => setCakeColor(e.target.value)}
+                  style={{ width: 34, height: 26, padding: 0, border: '1.5px solid #C5D4C8', borderRadius: 6, background: '#fff', cursor: 'pointer' }} />
+                {cakeColor.toLowerCase() !== STANDARD_CAKE_COLOR && (
+                  <button onClick={() => setCakeColor(STANDARD_CAKE_COLOR)}
+                    style={{ fontSize: 10, padding: '4px 8px', border: '1px solid #C5D4C8', borderRadius: 4, background: '#fff', cursor: 'pointer', color: '#9BB5A2', fontFamily: "'Quicksand',sans-serif", fontWeight: 700 }}>
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Flip */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Flip (180° X on geometry)</span>
@@ -810,12 +872,22 @@ export default function PipingCalibrator() {
               </button>
             </div>
             {cfg.bend && <>
-              <Slider label="Festoons" value={cfg.festoons} min={1} max={12} step={1} onChange={set('festoons')} />
-              <Slider label="Bend depth" value={cfg.bendDepth} min={0.05} max={0.9} step={0.01} onChange={set('bendDepth')} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Connect into a ring (no gaps)</span>
+                <button onClick={() => { setCfg(p => ({ ...p, bendRing: !p.bendRing })); if (!cfg.bendRing) setShowRing(true); }}
+                  style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: `2px solid ${cfg.bendRing ? '#3D5A44' : '#C5D4C8'}`, background: cfg.bendRing ? '#3D5A44' : '#fff', color: cfg.bendRing ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700 }}>
+                  {cfg.bendRing ? 'ON' : 'OFF'}
+                </button>
+              </div>
+              <Slider label={cfg.bendRing ? 'Segments (ring)' : 'Festoons'} value={cfg.festoons} min={1} max={24} step={1} onChange={set('festoons')} />
+              <Slider label="Bend depth" value={cfg.bendDepth} min={0} max={0.9} step={0.01} onChange={set('bendDepth')} />
+              <Slider label="Bend tilt" value={cfg.bendTilt} min={-90} max={90} step={1} onChange={set('bendTilt')} />
               <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
-                One strip bends into one U. <b>Festoons</b> = how many U swags around (1 = a single big
-                U at the front). <b>Bend depth</b> = how far each U hangs. <b>Y offset</b> sets the
-                attachment height up the wall.
+                One strip bends into one U swag. <b>Connect into a ring</b> tiles the swags edge-to-edge into a
+                single continuous garland all the way around (no gaps). <b>Segments/Festoons</b> = how many
+                swags around (more = shorter, tighter drapes). <b>Bend depth</b> = how far each U hangs.
+                <b>Bend tilt</b> rolls the strip so it leans into a draped rope look (0 = facing dead-on).
+                <b>Y offset</b> sets the attachment height up the wall.
               </div>
             </>}
 
@@ -937,6 +1009,16 @@ export default function PipingCalibrator() {
                   style={{ marginTop: 10, width: '100%', padding: '8px 0', background: '#3D5A44', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Quicksand',sans-serif" }}>
                   Copy to clipboard
                 </button>
+                <div style={{ borderTop: '1px solid #D8E2DB', margin: '12px 0 8px' }} />
+                <div style={{ fontSize: 10, color: '#9BB5A2', marginBottom: 8, lineHeight: 1.5 }}>
+                  Saves a clean, cropped PNG of the tuned piece (bend/swag included) on a transparent
+                  background — auto-framed and cropped like the pattern thumbnails. Use it as the element’s
+                  thumbnail.
+                </div>
+                <button onClick={captureScreenshot} disabled={!activeGlbUrl}
+                  style={{ width: '100%', padding: '8px 0', background: activeGlbUrl ? '#9B5F72' : '#d8c2cb', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: activeGlbUrl ? 'pointer' : 'default', fontFamily: "'Quicksand',sans-serif" }}>
+                  📸 Download screenshot
+                </button>
               </div>
             ) : (
               <div style={{ marginTop: 20, background: '#F7F0F3', border: '1.5px solid #E2C9D3', borderRadius: 10, padding: 14 }}>
@@ -972,7 +1054,7 @@ export default function PipingCalibrator() {
           <color attach="background" args={['#f4f0ea']} />
           <Environment preset="apartment" backgroundBlurriness={1} />
 
-          <CakeScene shape={shape} />
+          <CakeScene shape={shape} cakeColor={cakeColor} />
 
           <Suspense fallback={null}>
             {/* Both rings render together; a ring shows when it's included OR being edited. */}
@@ -1007,6 +1089,29 @@ export default function PipingCalibrator() {
                 <BuildingBlockScene glbUrl={activeGlbUrl} altGlbUrl={null} cfg={target === 'rim' ? rimCfg : boardCfg} />
               </Suspense>
               <OrbitControls target={[0, 0.14, 0]} enableZoom={false} enablePan={false} enableRotate={false} />
+            </Canvas>
+          </div>
+        )}
+
+        {/* Hidden thumbnail capture canvas (tune mode) — transparent bg, NO floor, framed on the
+            cake front so "Download screenshot" crops cleanly to the cake + piping (bend included),
+            instead of grabbing the whole live canvas with its floor and empty background. */}
+        {mode === 'tune' && activeGlbUrl && (
+          <div ref={thumbRef} style={{ position: 'absolute', left: -9999, top: -9999, width: 512, height: 512 }}>
+            <Canvas shadows gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 3.4, 5.4], fov: 38 }} style={{ width: 512, height: 512, background: 'transparent' }}>
+              <ambientLight intensity={0.75} />
+              <directionalLight position={[5, 10, 5]} intensity={1.4} />
+              <directionalLight position={[-3, 3, -3]} intensity={0.3} />
+              <Suspense fallback={null}>
+                <Environment preset="apartment" />
+                <CakeScene shape={shape} floor={false} cakeColor={cakeColor} />
+                {(includeBoard || target === 'board') && (
+                  <CalibScene glbUrl={activeGlbUrl} cfg={boardCfg} showRing anchorY={Y_BASE} inward={false} altGlbUrl={altBlobUrl} shape={shape} />
+                )}
+                {(includeRim || target === 'rim') && (
+                  <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} shape={shape} />
+                )}
+              </Suspense>
             </Canvas>
           </div>
         )}

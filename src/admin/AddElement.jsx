@@ -422,8 +422,10 @@ export default function AddElement() {
       setMsg({ ok: false, text: 'Name, element type and asset file are required.' });
       return;
     }
-    if (assetType === '3D' && !frontConfirmed) {
-      setMsg({ ok: false, text: 'Set the front view before saving — drag the model and click "✓ This is the front".' });
+    // The front view exists to (a) orient the model and (b) auto-capture a thumbnail from it.
+    // If a thumbnail has already been provided (uploaded or captured), it's no longer required.
+    if (assetType === '3D' && !frontConfirmed && !thumbnailBlob) {
+      setMsg({ ok: false, text: 'Set the front view before saving — drag the model and click "✓ This is the front", or upload a thumbnail.' });
       return;
     }
     if (applicableZones.length === 0) {
@@ -701,10 +703,18 @@ export default function AddElement() {
                   </div>
                 ))}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-                  <button onClick={confirmFrontView}
-                    style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${frontConfirmed ? '#3D5A44' : '#e05252'}`, background: frontConfirmed ? '#3D5A44' : '#fff', color: frontConfirmed ? '#fff' : '#e05252', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                    {frontConfirmed ? '✓ Front set' : '✱ Set front view (required)'}
-                  </button>
+                  {(() => {
+                    // Front view is required only when no thumbnail exists yet (it captures one);
+                    // with a thumbnail already provided it's optional (just sets orientation).
+                    const accent = frontConfirmed ? '#3D5A44' : (thumbnailBlob ? '#6B8C74' : '#e05252');
+                    const text   = frontConfirmed ? '✓ Front set' : (thumbnailBlob ? 'Set front view (optional)' : '✱ Set front view (required)');
+                    return (
+                      <button onClick={confirmFrontView}
+                        style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${accent}`, background: frontConfirmed ? '#3D5A44' : '#fff', color: frontConfirmed ? '#fff' : accent, cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
+                        {text}
+                      </button>
+                    );
+                  })()}
                 </div>
                 {isPipingType && (
                   <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #e2ebe3' }}>
