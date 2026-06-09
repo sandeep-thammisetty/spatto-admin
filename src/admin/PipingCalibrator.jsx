@@ -8,6 +8,21 @@ import { normalizeThumbnail } from '../lib/thumbnail.js';
 
 const DEG = Math.PI / 180;
 
+// Cream "softness" → material. MUST stay identical to creamMaterialProps() in
+// spattoo-core CakeTier.jsx so this preview matches the designer exactly. 0 = glossy/wet,
+// 1 = matte/whipped; the default 0.7 reproduces the original look (roughness 0.85, sheen 0.4).
+const PIPING_SOFTNESS_DEFAULT = 0.7;
+function creamMaterialProps(softness, color) {
+  const s = Math.min(1, Math.max(0, softness ?? PIPING_SOFTNESS_DEFAULT));
+  return {
+    color,
+    roughness:      0.5 + 0.5 * s,
+    sheen:          (0.4 / 0.7) * s,
+    sheenRoughness: 0.9,
+    sheenColor:     color,
+  };
+}
+
 // Bend a flat ring into `swagCount` scalloped drapes (garland/swag look).
 // MUST stay identical to buildSwagRing() in spattoo-core CakeTier.jsx so this
 // preview matches the designer exactly. Shells are spaced by arc-length along the
@@ -268,8 +283,7 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
       <>
         {festoonGeos.map((g, i) => (
           <mesh key={i} geometry={g} castShadow>
-            <meshPhysicalMaterial color="#f5e6c8" roughness={0.85}
-              sheen={0.4} sheenRoughness={0.9} sheenColor="#f5e6c8" />
+            <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, '#f5e6c8')} />
           </mesh>
         ))}
       </>
@@ -298,8 +312,7 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
           <group key={i} position={pos} quaternion={u.tq}>
             <group rotation={[0, -u.rotY + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
               <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale} castShadow>
-                <meshPhysicalMaterial color="#f5e6c8" roughness={0.85}
-                  sheen={0.4} sheenRoughness={0.9} sheenColor="#f5e6c8" />
+                <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, '#f5e6c8')} />
               </mesh>
             </group>
           </group>
@@ -357,7 +370,7 @@ export function BuildingBlockScene({ glbUrl, altGlbUrl, cfg, overlap = 0.9, shel
         return (
           <group key={k} position={pos} rotation={[0, -angle + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
             <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale}>
-              <meshPhysicalMaterial color={color} roughness={0.85} sheen={0.4} sheenRoughness={0.9} sheenColor={color} />
+              <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, color)} />
             </mesh>
           </group>
         );
@@ -432,7 +445,7 @@ export function PatternCakeThumb({
         return (
           <group key={i} position={pos} rotation={[0, -u.rotY + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
             <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale}>
-              <meshPhysicalMaterial color={color} roughness={0.85} sheen={0.4} sheenRoughness={0.9} sheenColor={color} />
+              <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, color)} />
             </mesh>
           </group>
         );
@@ -513,6 +526,7 @@ const DEFAULT_TARGET_CFG = {
   radialOffset: 0,
   yOffset:      0,
   spacing:      1,   // shell gap multiplier: 1 = touching/default, >1 = wider gaps (fewer shells)
+  softness:     PIPING_SOFTNESS_DEFAULT, // 0 glossy/wet … 0.7 default … 1 matte/whipped
   swagCount:    0,   // festoons around the ring (0 = flat ring, no swag). 2–3 = big U drapes.
   swagDepth:    0.4, // how far each festoon hangs (cake units)
   swagTilt:     0.4, // how strongly shells lean to follow the drape (0–1; ~0.4 looks best)
@@ -545,6 +559,11 @@ function sectionFor(prefix, c) {
     [`${prefix}_radial_offset`]: +c.radialOffset.toFixed(3),
     [`${prefix}_y_offset`]:      +c.yOffset.toFixed(3),
     [`${prefix}_spacing`]:       +(c.spacing ?? 1).toFixed(2),
+    // Softness (cream roughness/sheen) — only written when nudged off the default, so
+    // untouched elements keep a clean config and fall back to PIPING_SOFTNESS_DEFAULT.
+    ...(Math.abs((c.softness ?? PIPING_SOFTNESS_DEFAULT) - PIPING_SOFTNESS_DEFAULT) > 1e-9
+      ? { [`${prefix}_softness`]: +(c.softness ?? PIPING_SOFTNESS_DEFAULT).toFixed(2) }
+      : {}),
     [`${prefix}_swag_count`]:    Math.round(c.swagCount),
     [`${prefix}_swag_depth`]:    +c.swagDepth.toFixed(3),
     [`${prefix}_swag_tilt`]:     +c.swagTilt.toFixed(2),
@@ -860,6 +879,14 @@ export default function PipingCalibrator() {
             <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
               Gap between shells. 1 = touching (default). Higher = wider gaps & fewer shells.
               Set the <b>Rim</b>’s spacing higher to match the <b>Board</b>’s wider gap.
+            </div>
+
+            {/* Finish — how glossy vs matte the piped cream reads (drives roughness + sheen) */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Finish</div>
+            <Slider label="Softness" value={cfg.softness} min={0} max={1} step={0.05} resetTo={PIPING_SOFTNESS_DEFAULT} onChange={set('softness')} />
+            <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
+              0 = glossy / wet icing · {PIPING_SOFTNESS_DEFAULT} = standard (default) · 1 = matte / whipped.
+              Drives the cream’s roughness &amp; sheen. <b>Board</b> and <b>Rim</b> tune separately.
             </div>
 
             {/* Bend into U — bend the whole strip into draped U swags */}
