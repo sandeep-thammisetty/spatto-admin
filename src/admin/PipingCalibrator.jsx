@@ -123,13 +123,25 @@ function roundedRectPerimeter(halfW, halfD, cornerR) {
 // One strip = one swag, its whole mesh bent into a U (belly hangs, ends attach high).
 // Returns an array of bent geometries (one per festoon around the cake). The SAME
 // math is mirrored in the designer (CakeTier.jsx) so the preview matches.
+// Build a FRESH plain (non-interleaved, de-normalized) Float32 world-space buffer instead of
+// cloning the mesh geometry — meshopt/quantized GLBs use interleaved + normalised attributes
+// that must NOT be cloned-and-mutated (it can corrupt the cached useGLTF buffer). MUST match
+// bakeStrip in spattoo-core festoon.js.
 function bakeStrip(scene, flip) {
   scene.updateMatrixWorld(true);
-  let src = null;
-  // Bake the node transform into the geometry so we work in real (small) units, not
-  // the GLB's raw local coords (which can be ~70× scaled & offset).
-  scene.traverse(o => { if (o.isMesh && !src) { src = o.geometry.clone(); src.applyMatrix4(o.matrixWorld); } });
-  if (!src) return null;
+  let mesh = null;
+  scene.traverse(o => { if (o.isMesh && !mesh) mesh = o; });
+  if (!mesh) return null;
+  const pos = mesh.geometry.attributes.position;
+  const arr = new Float32Array(pos.count * 3);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z;
+  }
+  const src = new THREE.BufferGeometry();
+  src.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  if (mesh.geometry.index) src.setIndex(mesh.geometry.index.clone());
   if (flip) src.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI));
   src.computeBoundingBox();
   return src;
@@ -183,6 +195,50 @@ function buildFestoons(scene, { flip, festoons, depth, attachY, radius, spread =
   const span = (2 * Math.PI / festoons) * spread; // each U spans its share of the ring (small gap)
   return Array.from({ length: festoons }, (_, k) =>
     bendOneFestoon(src, { th0: Math.PI / 2 + k * (2 * Math.PI / festoons), span, depth, attachY, radius, tilt }));
+}
+
+// ── Wrap a pre-formed RING GLB around the wall (round OR rect) ─────────────────
+// MUST stay identical to circlePerimeter / buildWrapBand in spattoo-core (surface.js /
+// festoon.js) so this preview matches the cake. A vertex at angle θ around the ring maps to
+// fraction f=θ/2π of the tier perimeter, displaced out by its radial profile and lifted by
+// its height — so a ring GLB hugs a round wall as a circle and a sheet wall as a rounded-rect.
+function circlePerimeter(r) {
+  return { length: 2 * Math.PI * r, at(s) { const a = s / r, nx = Math.cos(a), nz = Math.sin(a); return { x: nx * r, z: nz * r, nx, nz }; } };
+}
+function wallPerimeter(shape) {
+  return shape?.kind === 'rect' ? roundedRectPerimeter(shape.halfW, shape.halfD, shape.cornerR) : circlePerimeter(CAKE_RADIUS);
+}
+function buildWrapBand(scene, { perim, anchorY = 0, heightFrac = 0.4, sizeFactor = 1, radius = CAKE_RADIUS, outset = 0.01 }) {
+  const g = bakeStrip(scene, false);
+  if (!g || !perim) return null;
+  g.computeBoundingBox();
+  let size = new THREE.Vector3(); g.boundingBox.getSize(size);
+  const thin = (size.x <= size.y && size.x <= size.z) ? 'x' : (size.z <= size.y ? 'z' : 'y');
+  if (thin === 'x') g.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+  else if (thin === 'z') g.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+  g.computeBoundingBox();
+  const c = new THREE.Vector3(); g.boundingBox.getCenter(c);
+  g.translate(-c.x, 0, -c.z);
+  g.computeBoundingBox();
+  const yMin = g.boundingBox.min.y;
+  size = new THREE.Vector3(); g.boundingBox.getSize(size);
+  const ringH = size.y || 1e-3;
+  const pos = g.attributes.position;
+  let rInner = Infinity;
+  for (let i = 0; i < pos.count; i++) { const rho = Math.hypot(pos.getX(i), pos.getZ(i)); if (rho < rInner) rInner = rho; }
+  const cs = (radius * heightFrac / ringH) * Math.max(0.05, sizeFactor);
+  const L = perim.length, v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const f = (((Math.atan2(z, x) / (2 * Math.PI)) % 1) + 1) % 1;
+    const P = perim.at(f * L);
+    const out = (Math.hypot(x, z) - rInner) * cs + outset;
+    v.set(P.x + P.nx * out, anchorY + (y - yMin) * cs, P.z + P.nz * out);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  pos.needsUpdate = true;
+  g.computeVertexNormals(); g.computeBoundingBox(); g.computeBoundingSphere();
+  return g;
 }
 
 // ── same extractGeo as CakeTier ───────────────────────────────────────────────
@@ -275,6 +331,23 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
       tilt: (cfg.bendTilt ?? 0) * DEG,
     });
   }, [scene, cfg.bend, cfg.bendRing, cfg.festoons, cfg.bendDepth, cfg.bendTilt, cfg.yOffset, cfg.radialOffset, anchorY, isRect]);
+
+  // Wrap mode: a pre-formed ring re-routed onto the wall as ONE band (round or rect).
+  const wrapGeo = useMemo(() => {
+    if (!cfg.wrap) return null;
+    return buildWrapBand(scene, {
+      perim: wallPerimeter(shape), anchorY: anchorY + cfg.yOffset,
+      heightFrac: 0.4, sizeFactor: 1, radius: CAKE_RADIUS, outset: 0.01 + Math.max(0, cfg.radialOffset),
+    });
+  }, [scene, cfg.wrap, cfg.yOffset, cfg.radialOffset, anchorY, shape]);
+
+  if (wrapGeo) {
+    return (
+      <mesh geometry={wrapGeo} castShadow>
+        <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, '#f5e6c8')} />
+      </mesh>
+    );
+  }
 
   if (!A) return null;
 
@@ -535,6 +608,7 @@ const DEFAULT_TARGET_CFG = {
   festoons:     6,   // how many U swags around the cake (1 = one big U at the front)
   bendDepth:    0.4, // how far each U belly hangs below the attachment ends (cake units)
   bendTilt:     30,  // degrees the strip rolls about its length → the draped lean (0 = face-on)
+  wrap:         false, // the GLB is a complete RING — wrap it round the wall as one band (no repeat)
   // Alternating pattern — version B (the "alternate") + its own transform + the repeat ratio.
   altEnabled:   false,
   altFlip:      false,
@@ -553,17 +627,29 @@ function patternStr(c) {
 // Map one edited config to its placement_config section. board → bottom_*, rim → top_*.
 // These are the exact keys the designer's pipingPlacementFromConfig() reads.
 function sectionFor(prefix, c) {
+  // Softness is shared by all modes — written only when nudged off the default.
+  const softness = Math.abs((c.softness ?? PIPING_SOFTNESS_DEFAULT) - PIPING_SOFTNESS_DEFAULT) > 1e-9
+    ? { [`${prefix}_softness`]: +(c.softness ?? PIPING_SOFTNESS_DEFAULT).toFixed(2) }
+    : {};
+  // Wrap (complete-ring) element: a totally different placement, so emit a CLEAN, minimal
+  // config — just the wrap flag + the two controls it actually uses (height up the wall and
+  // proud-of-wall offset). Rotation / spacing / swag / flip / alternation don't apply and are
+  // omitted, so the config reads unambiguously as "this is a ring."
+  if (c.wrap) {
+    return {
+      [`${prefix}_wrap`]:          true,
+      [`${prefix}_y_offset`]:      +c.yOffset.toFixed(3),
+      [`${prefix}_radial_offset`]: +c.radialOffset.toFixed(3),
+      ...softness,
+    };
+  }
   const base = {
     [`${prefix}_flip`]:          c.flipBottom,
     [`${prefix}_rotation`]:      [Math.round(c.rx), Math.round(c.ry), Math.round(c.rz)],
     [`${prefix}_radial_offset`]: +c.radialOffset.toFixed(3),
     [`${prefix}_y_offset`]:      +c.yOffset.toFixed(3),
     [`${prefix}_spacing`]:       +(c.spacing ?? 1).toFixed(2),
-    // Softness (cream roughness/sheen) — only written when nudged off the default, so
-    // untouched elements keep a clean config and fall back to PIPING_SOFTNESS_DEFAULT.
-    ...(Math.abs((c.softness ?? PIPING_SOFTNESS_DEFAULT) - PIPING_SOFTNESS_DEFAULT) > 1e-9
-      ? { [`${prefix}_softness`]: +(c.softness ?? PIPING_SOFTNESS_DEFAULT).toFixed(2) }
-      : {}),
+    ...softness,   // cream roughness/sheen — present only when nudged off the default
     [`${prefix}_swag_count`]:    Math.round(c.swagCount),
     [`${prefix}_swag_depth`]:    +c.swagDepth.toFixed(3),
     [`${prefix}_swag_tilt`]:     +c.swagTilt.toFixed(2),
@@ -575,6 +661,8 @@ function sectionFor(prefix, c) {
       [`${prefix}_bend_depth`]:  +c.bendDepth.toFixed(3),
       [`${prefix}_bend_tilt`]:   Math.round(c.bendTilt ?? 0),
     } : {}),
+    // Wrap (pre-formed ring around the wall) — flag only, written when on.
+    ...(c.wrap ? { [`${prefix}_wrap`]: true } : {}),
   };
   if (!c.altEnabled) return base;
   // Alternate version B (its GLB url is set during upload in Manage Elements, not here).
@@ -888,6 +976,23 @@ export default function PipingCalibrator() {
               0 = glossy / wet icing · {PIPING_SOFTNESS_DEFAULT} = standard (default) · 1 = matte / whipped.
               Drives the cream’s roughness &amp; sheen. <b>Board</b> and <b>Rim</b> tune separately.
             </div>
+
+            {/* Ring wrap — the GLB is a complete ring; wrap it round the wall as one band */}
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Ring (wrap around cake)</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>GLB is a complete ring</span>
+              <button onClick={() => { setCfg(p => ({ ...p, wrap: !p.wrap })); if (!cfg.wrap) setShowRing(true); }}
+                style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, border: `2px solid ${cfg.wrap ? '#3D5A44' : '#C5D4C8'}`, background: cfg.wrap ? '#3D5A44' : '#fff', color: cfg.wrap ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700 }}>
+                {cfg.wrap ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            {cfg.wrap && (
+              <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
+                Wraps the whole ring around the cake wall as one band — auto-fits the tier (round <i>or</i> sheet),
+                no repeating shells. <b>Y offset</b> rides it up the wall; <b>Radial offset</b> sits it proud.
+                Rotation / spacing / swag / bend don’t apply in this mode.
+              </div>
+            )}
 
             {/* Bend into U — bend the whole strip into draped U swags */}
             <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Bend into U (swag)</div>
