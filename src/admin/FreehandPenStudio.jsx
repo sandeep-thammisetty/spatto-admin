@@ -1,0 +1,582 @@
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls, Environment } from '@react-three/drei';
+import { HexColorPicker } from 'react-colorful';
+import * as THREE from 'three';
+
+// ── Freehand cream pen ──────────────────────────────────────────────────────
+// The customer (or baker) draws cream directly onto the cake with the mouse / finger:
+// pointer-down on the cake starts a stroke, drag lays down a centerline along the
+// surface, release ends it. Each stroke is swept into a cream-bead tube — the same
+// renderer the cream-pen text uses — so freehand stems, vines, squiggles read as
+// genuine piping. We can't ship an element for every shape; this is the escape hatch.
+//
+// Prototype first (mirrors CreamPenStudio): once it reads right, the stroke→tube core
+// and the placement_config schema port into spattoo-core.
+
+const CAKE_RADIUS = 1.2;
+const CAKE_HEIGHT = 1.45;
+const Y_BASE      = 0.1;
+
+const PIPING_SOFTNESS_DEFAULT = 0.7;
+function creamMaterialProps(softness, color) {
+  const s = Math.min(1, Math.max(0, softness ?? PIPING_SOFTNESS_DEFAULT));
+  return { color, roughness: 0.5 + 0.5 * s, sheen: (0.4 / 0.7) * s, sheenRoughness: 0.9, sheenColor: color };
+}
+
+const STANDARD_CAKE_COLOR = '#f5c6d0';
+
+// ── Nozzles ──────────────────────────────────────────────────────────────────
+// A piping tip is really just a CROSS-SECTION. Cream extruded through it = that
+// profile swept along the stroke. So a round tip → smooth rope, an open star →
+// ribbed rope with grooves down its length, French → many fine ribs. Each profile
+// is a closed polygon at unit radius (max reach = 1); thickness scales it to size.
+function starProfile(spikes, inner) {
+  const out = [];
+  for (let i = 0; i < spikes; i++) {
+    const a0 = (i / spikes) * Math.PI * 2;          // outer point
+    const a1 = ((i + 0.5) / spikes) * Math.PI * 2;  // valley between points
+    out.push([Math.cos(a0), Math.sin(a0)]);
+    out.push([Math.cos(a1) * inner, Math.sin(a1) * inner]);
+  }
+  return out;
+}
+function roundProfile(n) {
+  const out = [];
+  for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; out.push([Math.cos(a), Math.sin(a)]); }
+  return out;
+}
+// Tunable: spikes = rib count, inner = valley depth (smaller = deeper grooves).
+const NOZZLES = [
+  { key: 'round',    label: 'Round',       hint: 'Writing / smooth rope',  profile: roundProfile(16) },
+  { key: 'star5',    label: 'Open Star',   hint: '1M — the classic',        profile: starProfile(5, 0.55) },
+  { key: 'star6',    label: '6-Star',      hint: 'Tighter ribs',            profile: starProfile(6, 0.55) },
+  { key: 'closed',   label: 'Closed Star', hint: 'Deep grooves',            profile: starProfile(6, 0.40) },
+  { key: 'french',   label: 'French',      hint: 'Fine fluted ribs',        profile: starProfile(14, 0.82) },
+];
+const NOZZLE_BY_KEY = Object.fromEntries(NOZZLES.map(n => [n.key, n]));
+const DEFAULT_NOZZLE = 'star5';
+
+// ── Sweep core ───────────────────────────────────────────────────────────────
+// Everything (rope, shell, rosette) is the SAME nozzle profile swept along some
+// centerline — only the centerline and the radius-along-it change. We sample a
+// CatmullRom through the control points, build Frenet frames (a stable normal/
+// binormal plane per sample), drop the profile ring into each frame at radius
+// `radiusAt(i, segs)`, stitch the rings, and fan-cap both ends (rounded tips).
+// Appends into shared pos/idx so one geometry can hold many shells/rosettes.
+const CAKE_TOP_Y = Y_BASE + CAKE_HEIGHT;
+
+// Outward surface normal at a point on THIS cake — up on the top cap, radial on the
+// wall. Lets shells/rosettes stand off the surface correctly on both.
+function surfaceNormalAt(p) {
+  if (p.y > CAKE_TOP_Y - 0.05) return new THREE.Vector3(0, 1, 0);
+  const radial = new THREE.Vector3(p.x, 0, p.z);
+  return radial.lengthSq() < 1e-6 ? new THREE.Vector3(0, 1, 0) : radial.normalize();
+}
+
+function pushSweep(pos, idx, controlPts, profile, radiusAt) {
+  const curve = new THREE.CatmullRomCurve3(controlPts, false, 'catmullrom', 0.5);
+  const segs = Math.min(800, Math.max(20, controlPts.length * 4));
+  const samples = curve.getPoints(segs);                 // segs + 1
+  const frames = curve.computeFrenetFrames(segs, false);
+  const P = profile.length;
+  const base = pos.length / 3;
+
+  for (let i = 0; i <= segs; i++) {
+    const C = samples[i], N = frames.normals[i], B = frames.binormals[i], r = radiusAt(i, segs);
+    for (let j = 0; j < P; j++) {
+      const px = profile[j][0] * r, py = profile[j][1] * r;
+      pos.push(C.x + N.x * px + B.x * py, C.y + N.y * px + B.y * py, C.z + N.z * px + B.z * py);
+    }
+  }
+  for (let i = 0; i < segs; i++) {
+    for (let j = 0; j < P; j++) {
+      const a = base + i * P + j, b = base + i * P + (j + 1) % P;
+      const c = base + (i + 1) * P + j, d = base + (i + 1) * P + (j + 1) % P;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  // fan caps, centre nudged out along the tangent so the tip rounds off
+  const r0 = radiusAt(0, segs), rn = radiusAt(segs, segs);
+  const sC = samples[0].clone().addScaledVector(frames.tangents[0], -r0 * 0.6);
+  const eC = samples[segs].clone().addScaledVector(frames.tangents[segs], rn * 0.6);
+  const sI = pos.length / 3; pos.push(sC.x, sC.y, sC.z);
+  const eI = pos.length / 3; pos.push(eC.x, eC.y, eC.z);
+  for (let j = 0; j < P; j++) {
+    idx.push(sI, base + (j + 1) % P, base + j);
+    idx.push(eI, base + segs * P + j, base + segs * P + (j + 1) % P);
+  }
+}
+
+function finishGeo(pos, idx) {
+  if (!pos.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Walk a drawn polyline and drop a stamp every `step` of arc length, giving its
+// position + travel direction — used to lay shell/rosette borders along the drag.
+function stampAlong(points, step) {
+  const pts = points.filter((p, i) => i === 0 || p.distanceTo(points[i - 1]) > 1e-4);
+  if (pts.length === 0) return [];
+  if (pts.length === 1) return [{ p: pts[0], dir: new THREE.Vector3(0, 0, -1) }];
+  const out = [];
+  let acc = 0, next = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], seg = a.distanceTo(b);
+    if (seg < 1e-6) continue;
+    const dir = b.clone().sub(a).multiplyScalar(1 / seg);
+    while (next <= acc + seg + 1e-9) {
+      out.push({ p: a.clone().lerp(b, (next - acc) / seg), dir: dir.clone() });
+      next += step;
+    }
+    acc += seg;
+  }
+  if (!out.length) out.push({ p: pts[0], dir: pts[1].clone().sub(pts[0]).normalize() });
+  return out;
+}
+
+// Seat a drawn path onto the cake. Each point is pushed out along the surface normal so
+// the rope's UNDERSIDE touches whatever is below it: the cake itself (offset = rope
+// radius), or — where the path loops back over cream it already laid — the top of that
+// cream, so the new coil rests ON the lower one. `stack` turns that build-up on (rosette)
+// or off (single layer: line). Works on the top (normal = up) and the wall (normal =
+// radial). Input is the RAW surface hit; output is the seated centerline to sweep.
+function seat(rawPoints, thickness, stack) {
+  const pts = rawPoints.filter((p, i) => i === 0 || p.distanceTo(rawPoints[i - 1]) > 1e-4);
+  if (pts.length === 0) return [];
+  const reach = thickness * 1.6;   // footprints closer than this (along the surface) overlap
+  const behind = thickness * 3;    // ignore same-coil neighbours laid within this arc length
+  const placed = [];               // { tp: raw surface pt, s: arc length so far, off: normal offset }
+  const out = [];
+  let cum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0) cum += pts[i].distanceTo(pts[i - 1]);
+    let off = thickness;           // default: rest on the cake (underside grazes the surface)
+    if (stack) {
+      let below = 0;
+      for (const q of placed) {
+        if (cum - q.s < behind) continue;                       // skip the current coil itself
+        if (pts[i].distanceTo(q.tp) < reach && q.off > below) below = q.off;
+      }
+      if (below > 0) off = below + thickness * 1.7;             // nestle on top of the cream below
+    }
+    placed.push({ tp: pts[i], s: cum, off });
+    out.push(pts[i].clone().addScaledVector(surfaceNormalAt(pts[i]), off));
+  }
+  return out;
+}
+
+// A lone tap can't sweep — give it a tiny stub so a dot still reads as piped cream.
+function stubIfSingle(pts, thickness) {
+  return pts.length === 1 ? [pts[0], pts[0].clone().add(new THREE.Vector3(0, Math.max(0.02, thickness), 0))] : pts;
+}
+
+// ── Style builders ──────────────────────────────────────────────────────────
+// LINE — steady rope resting on the surface (single layer). Stems, vines, writing.
+function buildLine(points, profile, thickness) {
+  const pts = stubIfSingle(seat(points, thickness, false), thickness);
+  if (pts.length === 0) return null;
+  const pos = [], idx = [];
+  pushSweep(pos, idx, pts, profile, () => thickness);
+  return finishGeo(pos, idx);
+}
+
+// SHELL — a fat rounded head tapering to a pointed tail, piped in a row (shell border).
+// Each shell is the profile swept along a short arc that rises off the surface then
+// settles, with the radius swelling near the head and tapering to a point at the tail.
+function buildShells(points, profile, thickness) {
+  const headR = thickness * 2.2, L = thickness * 7, step = Math.max(L * 0.5, thickness * 3);
+  const pos = [], idx = [];
+  for (const { p, dir } of stampAlong(points, step)) {
+    const up = surfaceNormalAt(p);
+    let f = dir.clone().negate().addScaledVector(up, dir.dot(up));   // tail dir, on the surface
+    if (f.lengthSq() < 1e-6) { f = new THREE.Vector3(1, 0, 0).addScaledVector(up, -up.x); }
+    f.normalize();
+    const hmax = headR * 1.1;
+    const c = [
+      p.clone().addScaledVector(up, headR * 0.7),   // nose resting on the surface, not sunk
+      p.clone().addScaledVector(f, L * 0.15).addScaledVector(up, hmax * 0.95),
+      p.clone().addScaledVector(f, L * 0.45).addScaledVector(up, hmax),
+      p.clone().addScaledVector(f, L * 0.75).addScaledVector(up, hmax * 0.4),
+      p.clone().addScaledVector(f, L).addScaledVector(up, headR * 0.05),
+    ];
+    const radiusAt = (i, n) => {
+      const t = i / n;
+      const s = t < 0.25 ? 0.55 + 0.45 * (t / 0.25) : Math.pow(1 - (t - 0.25) / 0.75, 1.5);
+      return headR * Math.max(0.03, s);
+    };
+    pushSweep(pos, idx, c, profile, radiusAt);
+  }
+  return finishGeo(pos, idx);
+}
+
+// ROSETTE — fully freehand: the rope follows the exact path you draw (so YOU make the
+// swirl). It's Line with stacking ON — the first coil sits on the cake, and where your
+// spiral comes back over an earlier coil it climbs onto it, so tight coils dome up while
+// a spread-out spiral stays flat. No floating: cream only rises when there's cream under it.
+function buildRosettes(points, profile, thickness) {
+  const pts = stubIfSingle(seat(points, thickness, true), thickness);
+  if (pts.length === 0) return null;
+  const pos = [], idx = [];
+  pushSweep(pos, idx, pts, profile, () => thickness);
+  return finishGeo(pos, idx);
+}
+
+const STROKE_BUILDERS = { line: buildLine, shell: buildShells, rosette: buildRosettes };
+function buildStrokeGeometry(style, points, profile, thickness) {
+  return (STROKE_BUILDERS[style] || buildLine)(points, profile, thickness);
+}
+
+function StrokeMesh({ style, points, color, thickness, softness, nozzle }) {
+  const profile = (NOZZLE_BY_KEY[nozzle] || NOZZLE_BY_KEY[DEFAULT_NOZZLE]).profile;
+  const geo = useMemo(() => buildStrokeGeometry(style, points, profile, thickness), [style, points, profile, thickness]);
+  if (!geo) return null;
+  return (
+    <mesh geometry={geo} castShadow>
+      {/* DoubleSide keeps the fan caps lit regardless of winding (cream is opaque) */}
+      <meshPhysicalMaterial side={THREE.DoubleSide} {...creamMaterialProps(softness, color)} />
+    </mesh>
+  );
+}
+
+// The raw point where the pointer ray meets the cake surface. No offset here — the
+// stroke builders seat the cream onto the surface (and onto cream already piped beneath
+// it), so resting height is decided by geometry, not a fixed fudge.
+function hitPoint(e) {
+  return e.point.clone();
+}
+
+function Scene({
+  cakeColor, minGap, activeRef,
+  liveColor, liveThickness, liveSoftness, liveNozzle, liveStyleKind,
+  committed, live, onStart, onMove,
+}) {
+  // Orbit is on by default; we only switch OFF rotate while the pointer is over the
+  // cake, so a press-drag there pipes instead of spinning the view. A drag that starts
+  // off the cake (empty space) rotates normally. Zoom & pan stay live everywhere.
+  const controls = useRef();
+  const overRef  = useRef(false);   // is the pointer currently over the cake?
+  const setRotate = on => { if (controls.current) controls.current.enableRotate = on; };
+
+  // Disable rotate the instant the pointer is over the cake (not just on press), so the
+  // pointerdown that begins a stroke can never be grabbed by OrbitControls first.
+  const handleEnter = useCallback(() => { overRef.current = true; setRotate(false); }, []);
+  // Leaving re-arms orbit — unless we're mid-stroke (a fast drag can wander off the cake
+  // and we don't want it to suddenly start spinning the view).
+  const handleLeave = useCallback(() => { overRef.current = false; if (!activeRef.current) setRotate(true); }, [activeRef]);
+
+  const handleDown = useCallback(e => {
+    e.stopPropagation();
+    try { e.target.setPointerCapture(e.pointerId); } catch { /* noop */ }
+    setRotate(false);
+    onStart(hitPoint(e));
+  }, [onStart]);
+
+  const handleMove = useCallback(e => {
+    e.stopPropagation();
+    onMove(hitPoint(e), minGap);
+  }, [onMove, minGap]);
+
+  // A stroke can end off the cake (pointer wandered off the surface). Once released,
+  // re-arm orbit if the pointer is no longer over the cake.
+  useEffect(() => {
+    const rearm = () => { if (!overRef.current) setRotate(true); };
+    window.addEventListener('pointerup', rearm);
+    window.addEventListener('pointercancel', rearm);
+    return () => {
+      window.removeEventListener('pointerup', rearm);
+      window.removeEventListener('pointercancel', rearm);
+    };
+  }, []);
+
+  return (
+    <>
+      <ambientLight intensity={0.7} />
+      <directionalLight position={[5, 10, 5]} intensity={1.4} castShadow />
+      <directionalLight position={[-3, 3, -3]} intensity={0.3} />
+      <Environment preset="apartment" backgroundBlurriness={1} />
+
+      {/* board */}
+      <mesh position={[0, 0.05, 0]} receiveShadow>
+        <cylinderGeometry args={[CAKE_RADIUS + 0.6, CAKE_RADIUS + 0.6, 0.1, 64]} />
+        <meshStandardMaterial color="#d4af37" roughness={0.15} metalness={0.75} />
+      </mesh>
+
+      {/* the writable cake — top cap + side wall, one mesh, so you can pipe anywhere */}
+      <mesh
+        position={[0, Y_BASE + CAKE_HEIGHT / 2, 0]}
+        castShadow receiveShadow
+        onPointerEnter={handleEnter}
+        onPointerLeave={handleLeave}
+        onPointerDown={handleDown}
+        onPointerMove={handleMove}
+      >
+        <cylinderGeometry args={[CAKE_RADIUS, CAKE_RADIUS, CAKE_HEIGHT, 96]} />
+        <meshStandardMaterial color={cakeColor} roughness={0.68} />
+      </mesh>
+
+      {/* floor */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+        <planeGeometry args={[20, 20]} />
+        <meshStandardMaterial color="#f0ebe5" roughness={0.9} />
+      </mesh>
+
+      {/* committed strokes — frozen at the cream they were piped with */}
+      {committed.map((s, i) => (
+        <StrokeMesh key={i} style={s.style} points={s.points} color={s.color} thickness={s.thickness} softness={s.softness} nozzle={s.nozzle} />
+      ))}
+      {/* live stroke under the pointer */}
+      {live.length > 0 && (
+        <StrokeMesh style={liveStyleKind} points={live} color={liveColor} thickness={liveThickness} softness={liveSoftness} nozzle={liveNozzle} />
+      )}
+
+      {/* rotate auto-disables while the pointer is over the cake (see handlers above) */}
+      <OrbitControls ref={controls} makeDefault target={[0, 1.6, 0]} />
+    </>
+  );
+}
+
+function Slider({ label, value, min, max, step = 1, onChange, color = '#3D5A44', resetTo = 0 }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color, minWidth: 96, fontFamily: "'Quicksand',sans-serif" }}>{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e => onChange(Number(e.target.value))} style={{ flex: 1, accentColor: color }} />
+      <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 46, textAlign: 'right', fontFamily: "'Quicksand',sans-serif" }}>
+        {typeof value === 'number' && !Number.isInteger(value) ? value.toFixed(3) : value}
+      </span>
+      <button onClick={() => onChange(resetTo)}
+        style={{ fontSize: 10, padding: '2px 6px', border: '1px solid #C5D4C8', borderRadius: 4, background: '#fff', cursor: 'pointer', color: '#9BB5A2' }}>
+        {resetTo}
+      </button>
+    </div>
+  );
+}
+
+// Draw a nozzle's cross-section polygon as a little tip icon (the hole you'd pipe through).
+function NozzlePreview({ profile, fill, size = 30 }) {
+  const r = size / 2 - 2, c = size / 2;
+  const d = profile.map((p, i) => `${i ? 'L' : 'M'}${(c + p[0] * r).toFixed(1)} ${(c - p[1] * r).toFixed(1)}`).join(' ') + ' Z';
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
+      <circle cx={c} cy={c} r={r + 1.5} fill="none" stroke="#C5D4C8" strokeWidth="1.5" />
+      <path d={d} fill={fill} stroke="#7d9a86" strokeWidth="1" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PipingBag({ color }) {
+  return (
+    <svg width="40" height="52" viewBox="0 0 40 52" style={{ flexShrink: 0 }}>
+      <path d="M6 4 H34 L24 30 H16 Z" fill={color} stroke="#9BB5A2" strokeWidth="1.5" strokeLinejoin="round" />
+      <rect x="16" y="30" width="8" height="9" rx="1.5" fill={color} stroke="#9BB5A2" strokeWidth="1.5" />
+      <path d="M18 39 Q20 48 20 50 Q20 48 22 39 Z" fill={color} />
+      <path d="M6 4 H34" stroke="#7d9a86" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export default function FreehandPenStudio() {
+  const [color, setColor]       = useState('#ffffff');
+  const [thickness, setThick]   = useState(0.03);
+  const [softness, setSoft]     = useState(PIPING_SOFTNESS_DEFAULT);
+  const [nozzle, setNozzle]     = useState(DEFAULT_NOZZLE);
+  const [style, setStyle]       = useState('line');   // line | shell | rosette
+  const [cakeColor, setCakeColor] = useState(STANDARD_CAKE_COLOR);
+
+  const [committed, setCommitted] = useState([]);   // [{ style, points, color, thickness, softness, nozzle }]
+  const [live, setLive]           = useState([]);   // Vector3[]
+  const activeRef = useRef(false);
+  // freeze the cream + nozzle + style of the in-progress stroke at the values it started with
+  const liveStyle = useRef({ color, thickness, softness, nozzle, style });
+  // min world-space spacing between captured points (keeps the tube clean + cheap)
+  const minGap = useMemo(() => Math.max(0.008, thickness * 0.5), [thickness]);
+
+  const startStroke = useCallback(pt => {
+    activeRef.current = true;
+    liveStyle.current = { color, thickness, softness, nozzle, style };
+    setLive([pt]);
+  }, [color, thickness, softness, nozzle, style]);
+
+  const movePoint = useCallback((pt, gap) => {
+    if (!activeRef.current) return;
+    setLive(prev => {
+      if (prev.length && pt.distanceTo(prev[prev.length - 1]) < gap) return prev;
+      return [...prev, pt];
+    });
+  }, []);
+
+  // End the stroke wherever the pointer comes up — even off the cake / off-canvas.
+  useEffect(() => {
+    const end = () => {
+      if (!activeRef.current) return;
+      activeRef.current = false;
+      setLive(pts => {
+        if (pts.length) {
+          const s = liveStyle.current;
+          setCommitted(c => [...c, { style: s.style, points: pts, color: s.color, thickness: s.thickness, softness: s.softness, nozzle: s.nozzle }]);
+        }
+        return [];
+      });
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    return () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+  }, []);
+
+  const undo  = () => setCommitted(c => c.slice(0, -1));
+  const clear = () => setCommitted([]);
+
+  // placement_config — strokes as rounded polylines in cake-space (origin-centred,
+  // CAKE_RADIUS units). The core importer rebuilds the same tubes from this.
+  const cfgJson = useMemo(() => JSON.stringify({
+    type: 'freehand_piping',
+    strokes: committed.map(s => ({
+      style:     s.style,
+      nozzle:    s.nozzle,
+      color:     s.color,
+      thickness: +s.thickness.toFixed(3),
+      softness:  +s.softness.toFixed(2),
+      points:    s.points.map(p => [+p.x.toFixed(3), +p.y.toFixed(3), +p.z.toFixed(3)]),
+    })),
+  }, null, 2), [committed]);
+
+  const panel = { background: '#fff', border: '1.5px solid #E8EFE9', borderRadius: 12, padding: 16, marginBottom: 14 };
+  const heading = { fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 };
+  const totalPts = committed.reduce((n, s) => n + s.points.length, 0);
+
+  return (
+    <div style={{ display: 'flex', height: 'calc(100vh - 56px)', fontFamily: "'Quicksand', sans-serif", background: '#EDEAE2' }}>
+      {/* Controls */}
+      <div style={{ width: 360, overflowY: 'auto', padding: 18, borderRight: '1px solid #DCE5DD' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 800, color: '#2C4433', margin: '0 0 4px' }}>✍️  Freehand Pen</h2>
+        <p style={{ fontSize: 11, color: '#9BB5A2', margin: '0 0 16px', lineHeight: 1.5 }}>
+          Drag on the cake to pipe a stroke, release to stop. Drag the empty space around it to
+          rotate the view. Great for stems, vines and squiggles. Prototype — the stroke→tube core
+          ports into <b>spattoo-core</b>.
+        </p>
+
+        <div style={panel}>
+          <div style={heading}>Style</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[
+              { k: 'line',    l: '〜 Line',    h: 'Steady rope — stems, vines, writing' },
+              { k: 'shell',   l: '🐚 Shell',   h: 'Shell border — drag to lay a row' },
+              { k: 'rosette', l: '🌀 Rosette', h: 'Freehand swirl that builds up as you coil it' },
+            ].map(s => {
+              const on = style === s.k;
+              return (
+                <button key={s.k} onClick={() => setStyle(s.k)} title={s.h}
+                  style={{ flex: 1, fontSize: 12, padding: '8px 0', borderRadius: 8, cursor: 'pointer', fontWeight: 700,
+                    border: `2px solid ${on ? '#3D5A44' : '#C5D4C8'}`,
+                    background: on ? '#3D5A44' : '#fff', color: on ? '#fff' : '#6B8C74' }}>
+                  {s.l}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 10, color: '#9BB5A2', margin: '8px 0 0', lineHeight: 1.5 }}>
+            {style === 'line' ? 'Drag to pipe a continuous rope.'
+              : style === 'shell' ? 'Drag along where you want the border — shells march along the path.'
+              : 'Draw a spiral — the cream follows your hand and builds up as the coils stack.'}
+          </p>
+        </div>
+
+        <div style={panel}>
+          <div style={heading}>Nozzle</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {NOZZLES.map(n => {
+              const on = nozzle === n.key;
+              return (
+                <button key={n.key} onClick={() => setNozzle(n.key)} title={n.hint}
+                  style={{ flex: '1 0 60px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                    padding: '8px 4px', borderRadius: 8, cursor: 'pointer', background: on ? '#EEF4EF' : '#fff',
+                    border: `2px solid ${on ? '#3D5A44' : '#C5D4C8'}` }}>
+                  <NozzlePreview profile={n.profile} fill={color} />
+                  <span style={{ fontSize: 9.5, fontWeight: 800, color: on ? '#2C4433' : '#6B8C74' }}>{n.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: 10, color: '#9BB5A2', margin: '8px 0 0', lineHeight: 1.5 }}>
+            {NOZZLE_BY_KEY[nozzle]?.hint} — the cream takes the tip's cross-section as you draw.
+          </p>
+        </div>
+
+        <div style={panel}>
+          <div style={heading}>Cream</div>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <PipingBag color={color} />
+            <div style={{ flex: 1 }}>
+              <HexColorPicker color={color} onChange={setColor} style={{ width: '100%', height: 120 }} />
+            </div>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Slider label="Thickness" value={thickness} min={0.008} max={0.07} step={0.002} resetTo={0.03} onChange={setThick} color="#c47ad6" />
+            <Slider label="Softness" value={softness} min={0} max={1} step={0.05} resetTo={PIPING_SOFTNESS_DEFAULT} onChange={setSoft} />
+          </div>
+          <p style={{ fontSize: 10, color: '#9BB5A2', margin: '8px 0 0', lineHeight: 1.5 }}>
+            Softness: 0 = glossy gel · 0.7 = buttercream · 1 = matte.
+          </p>
+        </div>
+
+        <div style={panel}>
+          <div style={heading}>Strokes</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={undo} disabled={!committed.length}
+              style={{ flex: 1, fontSize: 12, padding: '9px 0', borderRadius: 8, fontWeight: 700,
+                border: '2px solid #C5D4C8', background: '#fff', color: committed.length ? '#6B8C74' : '#C5D4C8',
+                cursor: committed.length ? 'pointer' : 'not-allowed' }}>
+              ↶ Undo
+            </button>
+            <button onClick={clear} disabled={!committed.length}
+              style={{ flex: 1, fontSize: 12, padding: '9px 0', borderRadius: 8, fontWeight: 700,
+                border: '2px solid #E7C3C3', background: '#fff', color: committed.length ? '#C0392B' : '#E7C3C3',
+                cursor: committed.length ? 'pointer' : 'not-allowed' }}>
+              🗑 Clear
+            </button>
+          </div>
+          <p style={{ fontSize: 11, color: '#6B8C74', margin: '10px 0 0', fontWeight: 700 }}>
+            {committed.length} stroke{committed.length === 1 ? '' : 's'} · {totalPts} points
+          </p>
+        </div>
+
+        <div style={panel}>
+          <div style={heading}>placement_config</div>
+          <pre style={{ fontSize: 10, color: '#2C4433', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace', lineHeight: 1.4, maxHeight: 220, overflowY: 'auto' }}>{cfgJson}</pre>
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div style={{ flex: 1, position: 'relative' }}>
+        <Canvas shadows camera={{ position: [0, 4.6, 6.2], fov: 42 }}
+          style={{ touchAction: 'none', cursor: 'crosshair' }}>
+          <Scene
+            cakeColor={cakeColor} minGap={minGap} activeRef={activeRef}
+            liveColor={color} liveThickness={thickness} liveSoftness={softness} liveNozzle={nozzle} liveStyleKind={style}
+            committed={committed} live={live} onStart={startStroke} onMove={movePoint}
+          />
+        </Canvas>
+
+        <div style={{ position: 'absolute', top: 14, left: 14, background: '#fff', padding: '6px 12px',
+          borderRadius: 10, border: '1px solid #E8EFE9', fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>
+          ✍️  Drag on the cake to pipe · drag the empty space to rotate
+        </div>
+
+        <div style={{ position: 'absolute', top: 14, right: 14, display: 'flex', alignItems: 'center', gap: 8,
+          background: '#fff', padding: '6px 10px', borderRadius: 10, border: '1px solid #E8EFE9' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#6B8C74' }}>Cake</span>
+          <input type="color" value={cakeColor} onChange={e => setCakeColor(e.target.value)}
+            style={{ width: 28, height: 28, border: 'none', background: 'none', cursor: 'pointer' }} />
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -208,7 +208,7 @@ function circlePerimeter(r) {
 function wallPerimeter(shape) {
   return shape?.kind === 'rect' ? roundedRectPerimeter(shape.halfW, shape.halfD, shape.cornerR) : circlePerimeter(CAKE_RADIUS);
 }
-function buildWrapBand(scene, { perim, anchorY = 0, heightFrac = 0.4, sizeFactor = 1, radius = CAKE_RADIUS, outset = 0.01 }) {
+function buildWrapBand(scene, { perim, anchorY = 0, heightFrac = 0.4, sizeFactor = 1, radius = CAKE_RADIUS, outset = 0.01, tilt = 0 }) {
   const g = bakeStrip(scene, false);
   if (!g || !perim) return null;
   g.computeBoundingBox();
@@ -228,12 +228,16 @@ function buildWrapBand(scene, { perim, anchorY = 0, heightFrac = 0.4, sizeFactor
   for (let i = 0; i < pos.count; i++) { const rho = Math.hypot(pos.getX(i), pos.getZ(i)); if (rho < rInner) rInner = rho; }
   const cs = (radius * heightFrac / ringH) * Math.max(0.05, sizeFactor);
   const L = perim.length, v = new THREE.Vector3();
+  const cb = Math.cos(tilt), sb = Math.sin(tilt);                          // tilt about the wall tangent
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const f = (((Math.atan2(z, x) / (2 * Math.PI)) % 1) + 1) % 1;
     const P = perim.at(f * L);
-    const out = (Math.hypot(x, z) - rInner) * cs + outset;
-    v.set(P.x + P.nx * out, anchorY + (y - yMin) * cs, P.z + P.nz * out);
+    const rRel = (Math.hypot(x, z) - rInner) * cs;                         // radial dist from inner face
+    const h    = (y - yMin) * cs;                                          // height above the band base
+    const out  = rRel * cb + h * sb + outset;                            // tilt rotates the cross-section
+    const hT   = h * cb - rRel * sb;                                      //   about the inner-bottom edge
+    v.set(P.x + P.nx * out, anchorY + hT, P.z + P.nz * out);
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   pos.needsUpdate = true;
@@ -337,9 +341,10 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
     if (!cfg.wrap) return null;
     return buildWrapBand(scene, {
       perim: wallPerimeter(shape), anchorY: anchorY + cfg.yOffset,
-      heightFrac: 0.4, sizeFactor: 1, radius: CAKE_RADIUS, outset: 0.01 + Math.max(0, cfg.radialOffset),
+      heightFrac: 0.4, sizeFactor: cfg.wrapSize ?? 1, radius: CAKE_RADIUS,
+      outset: 0.01 + cfg.radialOffset, tilt: (cfg.wrapTilt ?? 0) * DEG,
     });
-  }, [scene, cfg.wrap, cfg.yOffset, cfg.radialOffset, anchorY, shape]);
+  }, [scene, cfg.wrap, cfg.yOffset, cfg.radialOffset, cfg.wrapTilt, cfg.wrapSize, anchorY, shape]);
 
   if (wrapGeo) {
     return (
@@ -609,6 +614,8 @@ const DEFAULT_TARGET_CFG = {
   bendDepth:    0.4, // how far each U belly hangs below the attachment ends (cake units)
   bendTilt:     30,  // degrees the strip rolls about its length → the draped lean (0 = face-on)
   wrap:         false, // the GLB is a complete RING — wrap it round the wall as one band (no repeat)
+  wrapTilt:     0,     // degrees the wrap band's cross-section pitches: + flares the top edge outward
+  wrapSize:     1,     // scale of the wrap band's cross-section (height + thickness); 1 = default
   // Alternating pattern — version B (the "alternate") + its own transform + the repeat ratio.
   altEnabled:   false,
   altFlip:      false,
@@ -640,6 +647,10 @@ function sectionFor(prefix, c) {
       [`${prefix}_wrap`]:          true,
       [`${prefix}_y_offset`]:      +c.yOffset.toFixed(3),
       [`${prefix}_radial_offset`]: +c.radialOffset.toFixed(3),
+      // Tilt — pitches the band's cross-section about the wall tangent. Written only when nudged.
+      ...(Math.round(c.wrapTilt) !== 0 ? { [`${prefix}_wrap_tilt`]: Math.round(c.wrapTilt) } : {}),
+      // Size — scales the band's cross-section. Written only when off the default.
+      ...(Math.abs((c.wrapSize ?? 1) - 1) > 1e-9 ? { [`${prefix}_wrap_size`]: +(c.wrapSize).toFixed(2) } : {}),
       ...softness,
     };
   }
@@ -986,13 +997,18 @@ export default function PipingCalibrator() {
                 {cfg.wrap ? 'ON' : 'OFF'}
               </button>
             </div>
-            {cfg.wrap && (
+            {cfg.wrap && <>
+              <Slider label="Size" value={cfg.wrapSize} min={0.2} max={2} step={0.05} resetTo={1} onChange={set('wrapSize')} color="#e0a052" />
+              <Slider label="Tilt" value={cfg.wrapTilt} min={-90} max={90} step={1} resetTo={0} onChange={set('wrapTilt')} color="#c47ad6" />
+              <Slider label="Radial offset" value={cfg.radialOffset} min={-0.3} max={0.5} step={0.01} resetTo={0} onChange={set('radialOffset')} />
               <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
                 Wraps the whole ring around the cake wall as one band — auto-fits the tier (round <i>or</i> sheet),
-                no repeating shells. <b>Y offset</b> rides it up the wall; <b>Radial offset</b> sits it proud.
-                Rotation / spacing / swag / bend don’t apply in this mode.
+                no repeating shells. <b>Size</b> scales the band's height &amp; thickness (lower = slimmer).
+                <b>Tilt</b> pitches the band: + flares the top edge outward, − tucks it in.
+                <b>Radial offset</b> sits it proud (+) or tucks it into the wall (−); <b>Y offset</b> rides it up the wall.
+                Plain rotation / spacing / swag / bend don’t apply in this mode.
               </div>
-            )}
+            </>}
 
             {/* Bend into U — bend the whole strip into draped U swags */}
             <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>Bend into U (swag)</div>

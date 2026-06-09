@@ -21,6 +21,8 @@ const ManageTags            = lazy(() => import('./admin/ManageTags.jsx'));
 const BakerSubscriptions    = lazy(() => import('./admin/BakerSubscriptions.jsx'));
 const PatternBuilder        = lazy(() => import('./admin/PatternBuilder.jsx'));
 const PipingCalibrator      = lazy(() => import('./admin/PipingCalibrator.jsx'));
+const CreamPenStudio        = lazy(() => import('./admin/CreamPenStudio.jsx'));
+const FreehandPenStudio     = lazy(() => import('./admin/FreehandPenStudio.jsx'));
 const ROUTES = {
   '/templates/create':    CreateTemplate,
   '/templates/design':    DesignTemplate,
@@ -36,6 +38,8 @@ const ROUTES = {
   '/plans':               ManagePlans,
   '/pattern-builder':     PatternBuilder,
   '/elements/piping-calibrator': PipingCalibrator,
+  '/elements/cream-pen':         CreamPenStudio,
+  '/elements/freehand-pen':      FreehandPenStudio,
 };
 
 const FALLBACK = (
@@ -197,6 +201,8 @@ function Router({ session }) {
             { href: '/flavours',              label: 'Cake Flavours' },
             { href: '/pattern-builder',       label: 'Pattern Builder' },
             { href: '/elements/piping-calibrator', label: '🍰 Piping Calibrator' },
+            { href: '/elements/cream-pen',         label: '🖊️ Cream Pen' },
+            { href: '/elements/freehand-pen',      label: '✍️ Freehand Pen' },
           ].map(({ href, label }) => (
             <li key={href}>
               <a href={href} style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
