@@ -162,6 +162,60 @@ export async function createPattern(payload) {
   return post('/api/admin/patterns', payload);
 }
 
+// ── Nozzle catalog ─────────────────────────────────────────────────────────────
+
+export async function fetchNozzles() {
+  return get('/api/nozzles');
+}
+
+export async function createNozzle(payload) {
+  return post('/api/admin/nozzles', payload);
+}
+
+// Bulk import from the paste screen. rows: [{ brand, number, name, category, description, is_common, sort_order }]
+// Returns { created, skipped, errors: [{ row, reason }] }.
+export async function bulkCreateNozzles(rows) {
+  return post('/api/admin/nozzles/bulk', { nozzles: rows });
+}
+
+export async function updateNozzle(id, payload) {
+  return patch(`/api/admin/nozzles/${id}`, payload);
+}
+
+export async function deleteNozzle(id) {
+  const res = await fetch(`${BASE_URL}/api/admin/nozzles/${id}`, {
+    method: 'DELETE',
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+// ── Craft guide (X-Ray baker how-to-make-it metadata) ──────────────────────────
+
+// Returns the craft guide for one element, or null if it hasn't been authored.
+export async function getCraftGuide(elementId) {
+  return get(`/api/admin/craft-guide/${elementId}`);
+}
+
+// GPT-suggest a craft guide from an image (base64 pre-upload, or a public image_url),
+// grounded on the nozzle catalog. payload: { imageBase64, mimeType } OR { image_url },
+// plus { name, description }. Returns { nozzle_recs, consistency, technique }.
+export async function suggestCraftGuide(payload) {
+  return post('/api/admin/craft-guide/suggest', payload);
+}
+
+// Upsert. payload: { nozzle_recs: [{ nozzle_id, brand, number, name, rank, confidence }], consistency, technique }
+export async function saveCraftGuide(elementId, payload) {
+  const res = await fetch(`${BASE_URL}/api/admin/craft-guide/${elementId}`, {
+    method: 'PUT',
+    headers: await authHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
 // ── Tags ──────────────────────────────────────────────────────────────────────
 
 export async function fetchAllTags() {

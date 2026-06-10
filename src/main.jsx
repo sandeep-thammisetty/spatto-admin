@@ -18,6 +18,7 @@ const ManageElements   = lazy(() => import('./admin/ManageElements.jsx'));
 const ManageFlavours        = lazy(() => import('./admin/ManageFlavours.jsx'));
 const ManagePlans           = lazy(() => import('./admin/ManagePlans.jsx'));
 const ManageTags            = lazy(() => import('./admin/ManageTags.jsx'));
+const ManageNozzles         = lazy(() => import('./admin/ManageNozzles.jsx'));
 const BakerSubscriptions    = lazy(() => import('./admin/BakerSubscriptions.jsx'));
 const PatternBuilder        = lazy(() => import('./admin/PatternBuilder.jsx'));
 const PipingCalibrator      = lazy(() => import('./admin/PipingCalibrator.jsx'));
@@ -32,6 +33,7 @@ const ROUTES = {
   '/elements/generate':   GenerateShape,
   '/elements/types':      ElementTypes,
   '/elements/tags':       ManageTags,
+  '/elements/nozzles':    ManageNozzles,
   '/bakers/onboard':      OnboardBaker,
   '/bakers/subscriptions': BakerSubscriptions,
   '/flavours':            ManageFlavours,
@@ -195,6 +197,7 @@ function Router({ session }) {
             { href: '/elements/manage',   label: 'Manage Elements' },
             { href: '/elements/generate', label: 'Generate Shape' },
             { href: '/elements/types',    label: 'Element Types' },
+            { href: '/elements/nozzles',  label: '🔧 Nozzle Catalog' },
             { href: '/bakers/onboard',        label: 'Onboard Baker' },
             { href: '/bakers/subscriptions',  label: 'Baker Subscriptions' },
             { href: '/plans',                 label: 'Subscription Plans' },

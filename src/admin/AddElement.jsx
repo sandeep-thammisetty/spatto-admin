@@ -3,7 +3,8 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { fetchElementTypes, fetchParentElements, getSignedUploadUrl, uploadToR2, createGlobalElement, removeBg, suggestElementMeta } from '../lib/api.js';
+import { fetchElementTypes, fetchParentElements, getSignedUploadUrl, uploadToR2, createGlobalElement, removeBg, suggestElementMeta, suggestCraftGuide, saveCraftGuide } from '../lib/api.js';
+import CraftGuideFields, { RANKS } from './CraftGuideFields.jsx';
 
 const ASSET_TYPES = [
   { value: '2D',      label: '2D Image',       folder: 'elements/files/2D' },
@@ -276,6 +277,14 @@ export default function AddElement() {
   const [glbRotation, setGlbRotation]         = useState([0, 0, 0]);
   const [frontConfirmed, setFrontConfirmed]   = useState(false);
   const [pipingBottomFlip, setPipingBottomFlip] = useState(true);
+
+  // Craft guide (X-Ray) — required for cream_piping elements. Saved to the
+  // element_craft_guide sidecar AFTER the element row is created.
+  const [craftRecs,         setCraftRecs]         = useState([]);
+  const [craftConsistency,  setCraftConsistency]  = useState('');
+  const [craftTechnique,    setCraftTechnique]    = useState('');
+  const [craftSuggesting,   setCraftSuggesting]   = useState(false);
+  const [craftSuggestError, setCraftSuggestError] = useState(null);
   const camRef = useRef(null);
   const [saving, setSaving]               = useState(false);
   const [removingBg, setRemovingBg]       = useState(false);
@@ -416,6 +425,30 @@ export default function AddElement() {
     }
   }
 
+  // GPT-suggest the craft guide from the staged thumbnail (pre-creation, so we
+  // send the image as base64 rather than a URL).
+  async function handleCraftSuggest() {
+    if (!thumbnailBlob) return;
+    setCraftSuggesting(true);
+    setCraftSuggestError(null);
+    try {
+      const ab = await thumbnailBlob.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      const imageBase64 = btoa(binary);
+      const r = await suggestCraftGuide({ imageBase64, mimeType: thumbnailBlob.type || 'image/png', name, description });
+      setCraftRecs(r.nozzle_recs ?? []);
+      if (r.consistency) setCraftConsistency(r.consistency);
+      if (r.technique) setCraftTechnique(r.technique);
+      if (!r.nozzle_recs?.length) setCraftSuggestError('GPT found no confident nozzle match — add manually.');
+    } catch (e) {
+      setCraftSuggestError(e.message || 'Unknown error');
+    } finally {
+      setCraftSuggesting(false);
+    }
+  }
+
   async function handleSave() {
     const needsFile = assetType !== '3D_GEOM';
     if (!name.trim() || !elementTypeId || (needsFile && !assetFile)) {
@@ -440,6 +473,23 @@ export default function AddElement() {
       setMsg({ ok: false, text: 'A thumbnail is required — upload or capture one below.' });
       return;
     }
+
+    // Craft guide is mandatory for cream_piping elements — at least one nozzle.
+    const cleanCraftRecs = craftRecs
+      .map(r => ({
+        nozzle_id:  r.nozzle_id ?? null,
+        brand:      (r.brand ?? '').trim(),
+        number:     String(r.number ?? '').trim(),
+        name:       (r.name ?? '').trim(),
+        rank:       RANKS.includes(r.rank) ? r.rank : 'primary',
+        confidence: r.confidence ?? null,
+      }))
+      .filter(r => r.brand && r.number);
+    if (isPipingType && cleanCraftRecs.length === 0) {
+      setMsg({ ok: false, text: 'Add at least one piping nozzle (or use ✨ Fill with GPT) — required for cream piping elements.' });
+      return;
+    }
+
     setSaving(true);
     setMsg(null);
 
@@ -495,7 +545,7 @@ export default function AddElement() {
         }
       }
 
-      await createGlobalElement({
+      const created = await createGlobalElement({
         name:             name.trim(),
         description:      description.trim() || null,
         element_type_id:  elementTypeId,
@@ -511,6 +561,15 @@ export default function AddElement() {
           : (assetType === '3D' && userPickedColor ? elementColor : null),
         sort_order:       0,
       });
+
+      // Step 2 — save the craft guide to the sidecar table now the element id exists.
+      if (isPipingType && created?.id && cleanCraftRecs.length) {
+        await saveCraftGuide(created.id, {
+          nozzle_recs: cleanCraftRecs,
+          consistency: craftConsistency || null,
+          technique:   craftTechnique.trim() || null,
+        });
+      }
 
       setMsg({ ok: true, text: 'Element saved!' });
       setName('');
@@ -529,6 +588,10 @@ export default function AddElement() {
       setPlacementScale('');
       setCapabilities({ resize: true, duplicate: true, color: false, delete: true });
       setPipingBottomFlip(true);
+      setCraftRecs([]);
+      setCraftConsistency('');
+      setCraftTechnique('');
+      setCraftSuggestError(null);
     } catch (err) {
       setMsg({ ok: false, text: err.message });
     } finally {
@@ -890,6 +953,25 @@ export default function AddElement() {
               ))}
             </div>
           </div>
+
+          {/* Baker craft guide (X-Ray) — required for cream piping elements */}
+          {isPipingType && (
+            <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1.5px solid #C9D9E0', background: '#F4F8FB' }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#3A5563', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
+                🔍 Baker Craft Guide · X-Ray <span style={{ color: '#c0392b' }}>*</span>
+              </div>
+              <div style={{ fontSize: 11, color: '#7E97A2', marginBottom: 14, lineHeight: 1.5 }}>
+                Required for cream piping — at least one nozzle. Add a thumbnail, then hit <b>✨ Fill with GPT</b> or enter them by hand.
+              </div>
+              <CraftGuideFields
+                recs={craftRecs} setRecs={setCraftRecs}
+                consistency={craftConsistency} setConsistency={setCraftConsistency}
+                technique={craftTechnique} setTechnique={setCraftTechnique}
+                onSuggest={handleCraftSuggest} suggesting={craftSuggesting} suggestError={craftSuggestError}
+                canSuggest={!!thumbnailBlob}
+              />
+            </div>
+          )}
 
           <button
             style={{ ...s.btn('primary'), opacity: (saving || removingBg) ? 0.6 : 1 }}

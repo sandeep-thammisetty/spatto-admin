@@ -8,6 +8,7 @@ import {
   getSignedUploadUrl, uploadToR2, updateGlobalElement, removeBg, deleteR2Object,
 } from '../lib/api.js';
 import { PatternCakeThumb } from './PipingCalibrator.jsx';
+import CraftGuideEditor from './CraftGuideEditor.jsx';
 import { normalizeThumbnail } from '../lib/thumbnail.js';
 
 const CAKE_ZONES = [
@@ -1473,6 +1474,17 @@ export default function ManageElements() {
                     </>
                   )}
                 </div>
+
+                {/* Baker craft guide (X-Ray) — sidecar table, saved independently */}
+                {isPipingConfig && (
+                  <CraftGuideEditor
+                    key={selectedEl.id}
+                    elementId={selectedEl.id}
+                    name={selectedEl.name}
+                    description={selectedEl.description}
+                    thumbnailUrl={selectedEl.thumbnail_url}
+                  />
+                )}
 
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button
