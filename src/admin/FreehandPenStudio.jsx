@@ -1,6 +1,6 @@
-import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import { useState, useRef, useMemo, useEffect, useCallback, Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Environment } from '@react-three/drei';
+import { OrbitControls, Environment, useGLTF } from '@react-three/drei';
 import { HexColorPicker } from 'react-colorful';
 import * as THREE from 'three';
 
@@ -243,6 +243,104 @@ function StrokeMesh({ style, points, color, thickness, softness, nozzle }) {
   );
 }
 
+// ── GLB stamps ────────────────────────────────────────────────────────────────
+// The other approach: instead of swept geometry, stamp a real modelled cream piece
+// (dollop / swirl / shell) along the stroke — a tap drops one, a drag tiles a row (a
+// shell/rope border). The GLB's own material is stripped and the shared cream material
+// applied, so colour/softness still drive the look. This is the building-block path we'll
+// port to spattoo-core if it reads better than the swept tubes.
+const STAMPS = [
+  { key: 'dollop',   label: 'Round Dollop',  url: '/piping/piping-round-dollop.glb' },
+  { key: 'soft',     label: 'Soft Swirl',    url: '/piping/piping-soft-swirl.glb' },
+  { key: 'shellsw',  label: 'Shell Swirl',   url: '/piping/piping-shell-swirl.glb' },
+  { key: 'ruffled',  label: 'Ruffled Swirl', url: '/piping/piping-ruffled-swirl.glb' },
+  { key: 'stardome', label: 'Star Dome',     url: '/piping/piping-star-dome.glb' },
+];
+STAMPS.forEach(s => useGLTF.preload(s.url));
+const DEFAULT_STAMP = STAMPS[0].url;
+
+// Tiny deterministic PRNG so per-stamp jitter (size + spin) is stable across re-renders.
+function mulberry32(seed) {
+  let t = (seed >>> 0) || 1;
+  return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
+}
+
+// Merge a GLB's meshes into one geometry, centred on X/Z with its base at y=0; report the
+// footprint (max x/z) so a stamp can be scaled to the rope size.
+function mergeGeos(geos) {
+  const pos = [], idx = [];
+  for (const g of geos) {
+    const p = g.attributes.position, gi = g.index, base = pos.length / 3;
+    for (let i = 0; i < p.count; i++) pos.push(p.getX(i), p.getY(i), p.getZ(i));
+    if (gi) for (let i = 0; i < gi.count; i++) idx.push(base + gi.getX(i));
+    else for (let i = 0; i < p.count; i++) idx.push(base + i);
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setIndex(idx); out.computeVertexNormals();
+  return out;
+}
+function useStampGeo(url) {
+  const { scene } = useGLTF(url);
+  return useMemo(() => {
+    const geos = [];
+    scene.traverse(o => { if (o.isMesh && o.geometry) geos.push(o.geometry.clone()); });
+    if (!geos.length) return { geo: null, footprint: 1 };
+    const merged = geos.length === 1 ? geos[0] : mergeGeos(geos);
+    // These piping GLBs are authored lying down (tip along Z, glTF Y-up vs Z-up). Stand them
+    // upright — tip → +Y — the same X+90° convention the cake's piping-ring loader uses, so
+    // mapping +Y to the surface normal makes the piece point straight out of the cake.
+    merged.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+    merged.computeBoundingBox();
+    const b = merged.boundingBox, size = new THREE.Vector3(), c = new THREE.Vector3();
+    b.getSize(size); b.getCenter(c);
+    merged.translate(-c.x, -b.min.y, -c.z);
+    return { geo: merged, footprint: Math.max(size.x, size.z) };
+  }, [scene]);
+}
+
+// Transforms for one stamp stroke: tap → one piece, drag → a tiled row. Orients each piece's
+// up axis to the cake surface normal and its forward to the travel direction; seeded jitter
+// keeps a row from looking cloned. The raw hit already sits ON the surface (no seat offset).
+function stampTransforms(points, size, spacing, footprint, seed) {
+  const baseScale = size / Math.max(footprint, 1e-4);   // size = stamp footprint in world units
+  const rand = mulberry32(seed);
+  const out = [];
+  const place = (p, dir) => {
+    const up = surfaceNormalAt(p);
+    let fwd = dir ? dir.clone() : new THREE.Vector3(1, 0, 0);
+    fwd.applyAxisAngle(up, dir ? (rand() - 0.5) * 0.5 : rand() * Math.PI * 2);
+    let z = fwd.sub(up.clone().multiplyScalar(fwd.dot(up)));
+    if (z.lengthSq() < 1e-8) z = new THREE.Vector3(0, 0, 1).sub(up.clone().multiplyScalar(up.z));
+    z.normalize();
+    const x = new THREE.Vector3().crossVectors(up, z).normalize();
+    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, up, z));
+    out.push({ pos: p.clone(), quat: q, scale: baseScale * (1 + (rand() - 0.5) * 0.16) });
+  };
+  const pts = points.filter((p, i) => i === 0 || p.distanceTo(points[i - 1]) > 1e-4);
+  if (!pts.length) return out;
+  let len = 0; for (let i = 1; i < pts.length; i++) len += pts[i].distanceTo(pts[i - 1]);
+  if (pts.length === 1 || len < size * 0.5) { place(pts[0], null); return out; }          // tap
+  const step = Math.max(spacing * size, 1e-3);
+  for (const { p, dir } of stampAlong(pts, step)) place(p, dir);                          // row
+  return out;
+}
+
+function StampStrokeMesh({ url, points, size, spacing, softness, color, seed }) {
+  const { geo, footprint } = useStampGeo(url);
+  const transforms = useMemo(
+    () => (geo ? stampTransforms(points, size, spacing, footprint, seed) : []),
+    [geo, footprint, points, size, spacing, seed],
+  );
+  if (!geo) return null;
+  const mat = creamMaterialProps(softness, color);
+  return transforms.map((t, i) => (
+    <mesh key={i} geometry={geo} position={t.pos} quaternion={t.quat} scale={t.scale} castShadow>
+      <meshPhysicalMaterial {...mat} />
+    </mesh>
+  ));
+}
+
 // The raw point where the pointer ray meets the cake surface. No offset here — the
 // stroke builders seat the cream onto the surface (and onto cream already piped beneath
 // it), so resting height is decided by geometry, not a fixed fudge.
@@ -252,7 +350,7 @@ function hitPoint(e) {
 
 function Scene({
   cakeColor, minGap, activeRef,
-  liveColor, liveThickness, liveSoftness, liveNozzle, liveStyleKind,
+  liveColor, liveThickness, liveSoftness, liveNozzle, liveStyleKind, liveStampUrl, liveStampSize, liveSpacing,
   committed, live, onStart, onMove,
 }) {
   // Orbit is on by default; we only switch OFF rotate while the pointer is over the
@@ -325,14 +423,15 @@ function Scene({
         <meshStandardMaterial color="#f0ebe5" roughness={0.9} />
       </mesh>
 
-      {/* committed strokes — frozen at the cream they were piped with */}
-      {committed.map((s, i) => (
-        <StrokeMesh key={i} style={s.style} points={s.points} color={s.color} thickness={s.thickness} softness={s.softness} nozzle={s.nozzle} />
-      ))}
-      {/* live stroke under the pointer */}
-      {live.length > 0 && (
-        <StrokeMesh style={liveStyleKind} points={live} color={liveColor} thickness={liveThickness} softness={liveSoftness} nozzle={liveNozzle} />
-      )}
+      {/* committed + live strokes (Suspense covers the GLB stamp loads) */}
+      <Suspense fallback={null}>
+        {committed.map((s, i) => (s.style === 'stamp'
+          ? <StampStrokeMesh key={i} url={s.stampUrl} points={s.points} size={s.stampSize} spacing={s.spacing} softness={s.softness} color={s.color} seed={s.seed} />
+          : <StrokeMesh key={i} style={s.style} points={s.points} color={s.color} thickness={s.thickness} softness={s.softness} nozzle={s.nozzle} />))}
+        {live.length > 0 && (liveStyleKind === 'stamp'
+          ? <StampStrokeMesh url={liveStampUrl} points={live} size={liveStampSize} spacing={liveSpacing} softness={liveSoftness} color={liveColor} seed={1} />
+          : <StrokeMesh style={liveStyleKind} points={live} color={liveColor} thickness={liveThickness} softness={liveSoftness} nozzle={liveNozzle} />)}
+      </Suspense>
 
       {/* rotate auto-disables while the pointer is over the cake (see handlers above) */}
       <OrbitControls ref={controls} makeDefault target={[0, 1.6, 0]} />
@@ -385,22 +484,25 @@ export default function FreehandPenStudio() {
   const [thickness, setThick]   = useState(0.03);
   const [softness, setSoft]     = useState(PIPING_SOFTNESS_DEFAULT);
   const [nozzle, setNozzle]     = useState(DEFAULT_NOZZLE);
-  const [style, setStyle]       = useState('line');   // line | shell | rosette
+  const [style, setStyle]       = useState('line');   // line | shell | rosette | stamp
+  const [stampUrl, setStampUrl] = useState(DEFAULT_STAMP);
+  const [stampSize, setStampSize] = useState(0.32);   // stamp footprint in world units (cake r = 1.2)
+  const [spacing, setSpacing]   = useState(0.85);
   const [cakeColor, setCakeColor] = useState(STANDARD_CAKE_COLOR);
 
-  const [committed, setCommitted] = useState([]);   // [{ style, points, color, thickness, softness, nozzle }]
+  const [committed, setCommitted] = useState([]);   // [{ style, points, color, thickness, softness, nozzle, stampUrl, spacing, seed }]
   const [live, setLive]           = useState([]);   // Vector3[]
   const activeRef = useRef(false);
   // freeze the cream + nozzle + style of the in-progress stroke at the values it started with
-  const liveStyle = useRef({ color, thickness, softness, nozzle, style });
+  const liveStyle = useRef({ color, thickness, softness, nozzle, style, stampUrl, stampSize, spacing });
   // min world-space spacing between captured points (keeps the tube clean + cheap)
   const minGap = useMemo(() => Math.max(0.008, thickness * 0.5), [thickness]);
 
   const startStroke = useCallback(pt => {
     activeRef.current = true;
-    liveStyle.current = { color, thickness, softness, nozzle, style };
+    liveStyle.current = { color, thickness, softness, nozzle, style, stampUrl, stampSize, spacing };
     setLive([pt]);
-  }, [color, thickness, softness, nozzle, style]);
+  }, [color, thickness, softness, nozzle, style, stampUrl, stampSize, spacing]);
 
   const movePoint = useCallback((pt, gap) => {
     if (!activeRef.current) return;
@@ -418,7 +520,7 @@ export default function FreehandPenStudio() {
       setLive(pts => {
         if (pts.length) {
           const s = liveStyle.current;
-          setCommitted(c => [...c, { style: s.style, points: pts, color: s.color, thickness: s.thickness, softness: s.softness, nozzle: s.nozzle }]);
+          setCommitted(c => [...c, { style: s.style, points: pts, color: s.color, thickness: s.thickness, softness: s.softness, nozzle: s.nozzle, stampUrl: s.stampUrl, stampSize: s.stampSize, spacing: s.spacing, seed: Math.floor(Math.random() * 1e6) }]);
         }
         return [];
       });
@@ -440,7 +542,9 @@ export default function FreehandPenStudio() {
     type: 'freehand_piping',
     strokes: committed.map(s => ({
       style:     s.style,
-      nozzle:    s.nozzle,
+      ...(s.style === 'stamp'
+        ? { stampUrl: s.stampUrl, stampSize: +s.stampSize.toFixed(3), spacing: +s.spacing.toFixed(2), seed: s.seed }
+        : { nozzle: s.nozzle }),
       color:     s.color,
       thickness: +s.thickness.toFixed(3),
       softness:  +s.softness.toFixed(2),
@@ -465,11 +569,12 @@ export default function FreehandPenStudio() {
 
         <div style={panel}>
           <div style={heading}>Style</div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {[
               { k: 'line',    l: '〜 Line',    h: 'Steady rope — stems, vines, writing' },
               { k: 'shell',   l: '🐚 Shell',   h: 'Shell border — drag to lay a row' },
               { k: 'rosette', l: '🌀 Rosette', h: 'Freehand swirl that builds up as you coil it' },
+              { k: 'stamp',   l: '🧁 Stamp',   h: 'Place a real cream GLB — tap one, drag a row' },
             ].map(s => {
               const on = style === s.k;
               return (
@@ -485,9 +590,35 @@ export default function FreehandPenStudio() {
           <p style={{ fontSize: 10, color: '#9BB5A2', margin: '8px 0 0', lineHeight: 1.5 }}>
             {style === 'line' ? 'Drag to pipe a continuous rope.'
               : style === 'shell' ? 'Drag along where you want the border — shells march along the path.'
-              : 'Draw a spiral — the cream follows your hand and builds up as the coils stack.'}
+              : style === 'rosette' ? 'Draw a spiral — the cream follows your hand and builds up as the coils stack.'
+              : 'Tap the cake to place one cream piece · drag to lay a row of them.'}
           </p>
         </div>
+
+        {style === 'stamp' && (
+          <div style={panel}>
+            <div style={heading}>Cream piece (GLB)</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {STAMPS.map(st => {
+                const on = stampUrl === st.url;
+                return (
+                  <button key={st.key} onClick={() => setStampUrl(st.url)} title={st.label}
+                    style={{ flex: '1 0 96px', padding: '8px 6px', borderRadius: 8, cursor: 'pointer', fontSize: 10.5, fontWeight: 800,
+                      background: on ? '#EEF4EF' : '#fff', border: `2px solid ${on ? '#3D5A44' : '#C5D4C8'}`, color: on ? '#2C4433' : '#6B8C74' }}>
+                    {st.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <Slider label="Size" value={stampSize} min={0.1} max={0.8} step={0.02} resetTo={0.32} onChange={setStampSize} color="#c47ad6" />
+              <Slider label="Spacing" value={spacing} min={0.5} max={2.0} step={0.05} resetTo={0.85} onChange={setSpacing} color="#c47ad6" />
+            </div>
+            <p style={{ fontSize: 10, color: '#9BB5A2', margin: '8px 0 0', lineHeight: 1.5 }}>
+              Size = piece footprint in cake units (cake radius ≈ 1.2) · Spacing = how tightly a dragged row overlaps. Thickness/Nozzle are ignored in this mode.
+            </p>
+          </div>
+        )}
 
         <div style={panel}>
           <div style={heading}>Nozzle</div>
@@ -561,6 +692,7 @@ export default function FreehandPenStudio() {
           <Scene
             cakeColor={cakeColor} minGap={minGap} activeRef={activeRef}
             liveColor={color} liveThickness={thickness} liveSoftness={softness} liveNozzle={nozzle} liveStyleKind={style}
+            liveStampUrl={stampUrl} liveStampSize={stampSize} liveSpacing={spacing}
             committed={committed} live={live} onStart={startStroke} onMove={movePoint}
           />
         </Canvas>
