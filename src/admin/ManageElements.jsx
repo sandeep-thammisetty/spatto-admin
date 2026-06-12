@@ -424,6 +424,8 @@ export default function ManageElements() {
   const [placementConfig,    setPlacementConfig]    = useState('{}');
   const [placementZoneConfig, setPlacementZoneConfig] = useState({});
   const [placementScale,      setPlacementScale]      = useState('');
+  const [singlePerSlot,      setSinglePerSlot]      = useState(false);
+  const [hugFill,            setHugFill]            = useState('');
   const [description,      setDescription]      = useState('');
   const [glbRotation,        setGlbRotation]        = useState([0, 0, 0]);
   const [frontConfirmed,     setFrontConfirmed]     = useState(false);
@@ -482,6 +484,8 @@ export default function ManageElements() {
     (el.allowed_zones ?? []).forEach(z => { if (pc[z]) zoneConf[z] = pc[z]; });
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
+    setSinglePerSlot(pc.single_per_slot === true);
+    setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
     setGlbEnvPreset('none');
     setGlbRotation(pc.rotation ?? [0, 0, 0]);
     setCalibratorJson('');
@@ -559,6 +563,13 @@ export default function ManageElements() {
       });
       if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
       else delete parsedConfig.r;
+      // Placement STYLE (hero = one instance per tier×surface vs. free scatter). Config-driven,
+      // never inferred from element type — see spattoo-core INVARIANTS.md rule #4.
+      if (singlePerSlot) parsedConfig.single_per_slot = true;
+      else delete parsedConfig.single_per_slot;
+      // Hero side-hug size = fraction of tier wall height (designer derives at render; r = stand size).
+      if (hugFill !== '') parsedConfig.hug_fill = parseFloat(hugFill);
+      else delete parsedConfig.hug_fill;
       if (glbRotation.some(v => v !== 0)) parsedConfig.rotation = glbRotation;
       else delete parsedConfig.rotation;
       // piping fields live directly in the placement_config JSON — no extra merge needed
@@ -1372,6 +1383,27 @@ export default function ManageElements() {
                           placeholder="e.g. 2.5 — leave blank for auto"
                           onChange={e => setPlacementScale(e.target.value)} />
                       </div>
+                      <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}>
+                        <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
+                          checked={singlePerSlot}
+                          onChange={e => setSinglePerSlot(e.target.checked)} />
+                        <div>
+                          <div style={s.checkLabel}>Single per slot (hero element)</div>
+                          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                            One instance per tier×surface via the checkbox chooser (toppers, top&side decor), instead of free scatter.
+                          </div>
+                        </div>
+                      </label>
+                      {singlePerSlot && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Side hug fill</span>
+                          <input type="number" min="0.1" max="1" step="0.05"
+                            style={{ ...s.input, flex: 1 }}
+                            value={hugFill}
+                            placeholder="0.7 — fraction of wall height (blank = default)"
+                            onChange={e => setHugFill(e.target.value)} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
