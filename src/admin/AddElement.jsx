@@ -452,14 +452,14 @@ export default function AddElement() {
   }
 
   async function handleSave() {
-    const needsFile = assetType !== '3D_GEOM';
+    const needsFile = assetType !== '3D_GEOM' && !isPatternType;
     if (!name.trim() || !elementTypeId || (needsFile && !assetFile)) {
       setMsg({ ok: false, text: 'Name, element type and asset file are required.' });
       return;
     }
     // The front view exists to (a) orient the model and (b) auto-capture a thumbnail from it.
     // If a thumbnail has already been provided (uploaded or captured), it's no longer required.
-    if (assetType === '3D' && !frontConfirmed && !thumbnailBlob) {
+    if (assetType === '3D' && !isPatternType && !frontConfirmed && !thumbnailBlob) {
       setMsg({ ok: false, text: 'Set the front view before saving — drag the model and click "✓ This is the front", or upload a thumbnail.' });
       return;
     }
@@ -610,6 +610,11 @@ export default function AddElement() {
   }
 
   const isPipingType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'cream_piping';
+  // Pattern types have no asset of their own — they reference part elements via
+  // placement_config.parts (decor_pattern: decor stickers; piping_pattern: cream blocks). So no
+  // file upload is required; image_url stays null (same as 3D-geometry elements already do).
+  const isPatternType = ['decor_pattern', 'piping_pattern'].includes(
+    elementTypes.find(t => t.id === elementTypeId)?.slug);
 
   return (
     <>

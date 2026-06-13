@@ -73,6 +73,18 @@ const DEFAULT_PIPING_PLACEMENT_CONFIG = {
   bottom_pattern:              'AB',
 };
 
+// Default placement_config for decor_pattern elements. A decor_pattern is a fileless
+// element that places several building-block parts at once (e.g. two unicorn eyes).
+// Seed a parts skeleton so the editor shows the expected shape: each part references a
+// building-block element_id and offsets it by dx/dz (mirror flips it). parts_deletable
+// controls whether the baker can remove individual parts. See spattoo-core placePattern.
+const DEFAULT_DECOR_PATTERN_PLACEMENT_CONFIG = {
+  parts_deletable: false,
+  parts: [
+    { element_id: '', dx: 0, dz: 0 },
+  ],
+};
+
 // Human-readable byte size in KB/MB only. Returns '' for null (procedural elements).
 function formatBytes(bytes) {
   if (bytes == null) return '';
@@ -276,9 +288,14 @@ function cameraToModelRotation({ camera, controls }, preTransformEuler = null) {
     q.multiply(qPre.invert());
   }
   const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
-  const toDeg = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
-  return [toDeg(e.x), toDeg(e.y), toDeg(e.z)];
+  // Return RADIANS. The designer feeds placement_config.rotation straight into THREE.Euler,
+  // which is radians — so this MUST be radians too. (It used to return degrees, ~57× too big,
+  // which is why every GLB oriented with this widget came out wildly spun in the designer.)
+  return [e.x, e.y, e.z];
 }
+
+// glbRotation is stored in radians (designer's unit); show it in degrees for humans.
+const radToDeg360 = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
 
 function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected, onMaterialRead }) {
   const { scene } = useGLTF(url);
@@ -426,6 +443,7 @@ export default function ManageElements() {
   const [placementScale,      setPlacementScale]      = useState('');
   const [singlePerSlot,      setSinglePerSlot]      = useState(false);
   const [hugFill,            setHugFill]            = useState('');
+  const [patternOnly,        setPatternOnly]        = useState(false);
   const [description,      setDescription]      = useState('');
   const [glbRotation,        setGlbRotation]        = useState([0, 0, 0]);
   const [frontConfirmed,     setFrontConfirmed]     = useState(false);
@@ -476,7 +494,11 @@ export default function ManageElements() {
     setGlbColor('#F0DEB8');
     const elSlug = elementTypes.find(t => t.id === el.element_type_id)?.slug;
     const elIsPiping = elSlug === 'cream_piping' || elSlug === 'piping_pattern';
-    const pc = el.placement_config ?? (elIsPiping ? { ...DEFAULT_PIPING_PLACEMENT_CONFIG } : {});
+    const elIsDecorPattern = elSlug === 'decor_pattern';
+    const pc = el.placement_config ?? (
+      elIsPiping ? { ...DEFAULT_PIPING_PLACEMENT_CONFIG }
+      : elIsDecorPattern ? structuredClone(DEFAULT_DECOR_PATTERN_PLACEMENT_CONFIG)
+      : {});
     setPlacementConfig(JSON.stringify(pc, null, 2));
     setGlbRoughness(pc.roughness ?? 0.6);
     setGlbMetalness(pc.metalness ?? 0.15);
@@ -486,6 +508,7 @@ export default function ManageElements() {
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setSinglePerSlot(pc.single_per_slot === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
+    setPatternOnly(pc.pattern_only === true);
     setGlbEnvPreset('none');
     setGlbRotation(pc.rotation ?? [0, 0, 0]);
     setCalibratorJson('');
@@ -528,6 +551,40 @@ export default function ManageElements() {
     captureThumbnail();
   }
 
+  // ── Live two-way binding between the structured controls and the placement_config JSON ──
+  // patchPc: a structured control writes its key into the JSON in real time (value of
+  // null/undefined/'' removes the key). syncStructuredFromPc: editing the JSON directly reflects
+  // back into the controls (only when it parses, so it doesn't fight you mid-type).
+  function patchPc(patch) {
+    setPlacementConfig(prev => {
+      let cur = {}; try { cur = JSON.parse(prev); } catch { cur = {}; }
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === null || v === undefined || v === '') delete cur[k];
+        else cur[k] = v;
+      }
+      return JSON.stringify(cur, null, 2);
+    });
+  }
+  function syncStructuredFromPc(pc) {
+    const zoneConf = {};
+    (applicableZones ?? []).forEach(z => { if (pc[z]) zoneConf[z] = pc[z]; });
+    setPlacementZoneConfig(zoneConf);
+    setPlacementScale(pc.r != null ? String(pc.r) : '');
+    setSinglePerSlot(pc.single_per_slot === true);
+    setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
+    setPatternOnly(pc.pattern_only === true);
+    // Keep glbRotation in lockstep with the JSON. handleSave rewrites rotation from
+    // glbRotation, so without this an edit to `rotation` in the textarea is silently
+    // reverted to the old value on save. (radians, THREE.Euler — see spattoo-core.)
+    if (Array.isArray(pc.rotation)) setGlbRotation(pc.rotation);
+    else setGlbRotation([0, 0, 0]);
+  }
+  function onPcJsonEdit(text) {
+    setPlacementConfig(text);
+    try { syncStructuredFromPc(JSON.parse(text)); } catch { /* invalid mid-type: leave controls */ }
+  }
+  const numPatch = v => (v === '' || isNaN(parseFloat(v))) ? '' : parseFloat(v);
+
   async function handleSave(withThumbnail = false) {
     if (!selectedEl || !name.trim()) {
       setMsg({ ok: false, text: 'Name is required.' });
@@ -554,8 +611,14 @@ export default function ManageElements() {
     setMsg(null);
 
     try {
+      // Fail loudly on bad JSON instead of silently saving {} (which would wipe parts/config).
       let parsedConfig = {};
-      try { parsedConfig = JSON.parse(placementConfig); } catch { /* keep empty */ }
+      try { parsedConfig = JSON.parse(placementConfig); }
+      catch (e) {
+        setMsg({ ok: false, text: `placement_config is not valid JSON — fix it before saving (${e.message}).` });
+        setSaving(false);
+        return;
+      }
       // Merge zone config
       applicableZones.forEach(z => {
         if (placementZoneConfig[z]) parsedConfig[z] = placementZoneConfig[z];
@@ -570,6 +633,9 @@ export default function ManageElements() {
       // Hero side-hug size = fraction of tier wall height (designer derives at render; r = stand size).
       if (hugFill !== '') parsedConfig.hug_fill = parseFloat(hugFill);
       else delete parsedConfig.hug_fill;
+      // Building-block part of a pattern — hidden from the picker, placed via its parent pattern.
+      if (patternOnly) parsedConfig.pattern_only = true;
+      else delete parsedConfig.pattern_only;
       if (glbRotation.some(v => v !== 0)) parsedConfig.rotation = glbRotation;
       else delete parsedConfig.rotation;
       // piping fields live directly in the placement_config JSON — no extra merge needed
@@ -964,7 +1030,19 @@ export default function ManageElements() {
                 <div style={s.field}>
                   <label style={s.label}>Element Type</label>
                   <select style={s.select} value={elementTypeId}
-                    onChange={e => { setElementTypeId(e.target.value); setParentId(''); }}>
+                    onChange={e => {
+                      const newTypeId = e.target.value;
+                      setElementTypeId(newTypeId);
+                      setParentId('');
+                      // Seed a parts skeleton when switching to decor_pattern, unless the
+                      // current config already has parts (don't clobber real edits).
+                      if (elementTypes.find(t => t.id === newTypeId)?.slug === 'decor_pattern') {
+                        let cur = {}; try { cur = JSON.parse(placementConfig); } catch { cur = {}; }
+                        if (!Array.isArray(cur.parts)) {
+                          onPcJsonEdit(JSON.stringify({ ...DEFAULT_DECOR_PATTERN_PLACEMENT_CONFIG, ...cur }, null, 2));
+                        }
+                      }
+                    }}>
                     {elementTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </div>
@@ -1098,9 +1176,9 @@ export default function ManageElements() {
                           <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                             <span style={{ fontSize: 11, fontWeight: 700, color: axisColor, width: 14, flexShrink: 0 }}>{axis}</span>
                             <div style={{ flex: 1, height: 4, background: '#e8ede9', borderRadius: 2, position: 'relative' }}>
-                              <div style={{ width: `${(glbRotation[idx] / 359) * 100}%`, height: '100%', background: axisColor, borderRadius: 2 }} />
+                              <div style={{ width: `${(radToDeg360(glbRotation[idx]) / 359) * 100}%`, height: '100%', background: axisColor, borderRadius: 2 }} />
                             </div>
-                            <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, minWidth: 32, textAlign: 'right' }}>{Math.round(glbRotation[idx])}°</span>
+                            <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, minWidth: 32, textAlign: 'right' }}>{Math.round(radToDeg360(glbRotation[idx]))}°</span>
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
@@ -1369,7 +1447,7 @@ export default function ManageElements() {
                             <select
                               style={{ ...s.select, flex: 1 }}
                               value={placementZoneConfig[zone] ?? ''}
-                              onChange={e => setPlacementZoneConfig(c => ({ ...c, [zone]: e.target.value }))}>
+                              onChange={e => { const v = e.target.value; setPlacementZoneConfig(c => ({ ...c, [zone]: v })); patchPc({ [zone]: v }); }}>
                               {PLACEMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                             </select>
                           </div>
@@ -1381,16 +1459,27 @@ export default function ManageElements() {
                           style={{ ...s.input, flex: 1 }}
                           value={placementScale}
                           placeholder="e.g. 2.5 — leave blank for auto"
-                          onChange={e => setPlacementScale(e.target.value)} />
+                          onChange={e => { setPlacementScale(e.target.value); patchPc({ r: numPatch(e.target.value) }); }} />
                       </div>
                       <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}>
                         <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
                           checked={singlePerSlot}
-                          onChange={e => setSinglePerSlot(e.target.checked)} />
+                          onChange={e => { setSinglePerSlot(e.target.checked); patchPc({ single_per_slot: e.target.checked ? true : null }); }} />
                         <div>
                           <div style={s.checkLabel}>Single per slot (hero element)</div>
                           <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
                             One instance per tier×surface via the checkbox chooser (toppers, top&side decor), instead of free scatter.
+                          </div>
+                        </div>
+                      </label>
+                      <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}>
+                        <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
+                          checked={patternOnly}
+                          onChange={e => { setPatternOnly(e.target.checked); patchPc({ pattern_only: e.target.checked ? true : null }); }} />
+                        <div>
+                          <div style={s.checkLabel}>Pattern-only (hide as individual)</div>
+                          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                            A building-block part of a pattern (e.g. one unicorn eye). Hidden from the decorations picker; placed only via its parent decor_pattern.
                           </div>
                         </div>
                       </label>
@@ -1401,7 +1490,7 @@ export default function ManageElements() {
                             style={{ ...s.input, flex: 1 }}
                             value={hugFill}
                             placeholder="0.7 — fraction of wall height (blank = default)"
-                            onChange={e => setHugFill(e.target.value)} />
+                            onChange={e => { setHugFill(e.target.value); patchPc({ hug_fill: numPatch(e.target.value) }); }} />
                         </div>
                       )}
                     </div>
@@ -1410,14 +1499,16 @@ export default function ManageElements() {
 
                 {/* ── placement_config JSON editor (+ calibrator paste side-by-side for piping) ── */}
                 <div style={s.field}>
-                  <label style={s.label}>placement_config (JSON)</label>
+                  <label style={s.label}>placement_config (JSON)
+                    {(() => { try { JSON.parse(placementConfig); return <span style={{ marginLeft: 8, fontSize: 11, color: '#3D5A44', fontWeight: 600 }}>✓ valid</span>; }
+                      catch (e) { return <span style={{ marginLeft: 8, fontSize: 11, color: '#c0392b', fontWeight: 700 }}>✗ invalid JSON — won’t save</span>; } })()}
+                  </label>
 
-                  {isPipingConfig ? (
-                    <>
+                  <>
                       <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
-                        {/* Left — paste from calibrator */}
+                        {/* Left — paste to merge */}
                         <div style={{ flex: '1 1 240px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', marginBottom: 4, fontFamily: "'Quicksand',sans-serif", textTransform: 'uppercase', letterSpacing: 0.5 }}>From Piping Calibrator</div>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: '#6B8C74', marginBottom: 4, fontFamily: "'Quicksand',sans-serif", textTransform: 'uppercase', letterSpacing: 0.5 }}>{isPipingConfig ? 'From Piping Calibrator' : 'Paste JSON to merge'}</div>
                           <textarea
                             rows={14}
                             value={calibratorJson}
@@ -1426,7 +1517,9 @@ export default function ManageElements() {
                             onFocus={e => e.stopPropagation()}
                             onPointerDown={e => e.stopPropagation()}
                             spellCheck={false}
-                            placeholder={'{\n  "bottom_flip": true,\n  "bottom_rotation": [83, -180, -3],\n  "bottom_radial_offset": 0.2,\n  "bottom_y_offset": 0.09,\n  "top_flip": false,\n  "top_rotation": [-15, 97, 12],\n  "top_radial_offset": -0.06,\n  "top_y_offset": -0.02\n}'}
+                            placeholder={isPipingConfig
+                              ? '{\n  "bottom_flip": true,\n  "bottom_rotation": [83, -180, -3],\n  "bottom_radial_offset": 0.2,\n  "bottom_y_offset": 0.09,\n  "top_flip": false,\n  "top_rotation": [-15, 97, 12],\n  "top_radial_offset": -0.06,\n  "top_y_offset": -0.02\n}'
+                              : '{\n  "mode": "side",\n  "r": 1,\n  "rotation": [0, 0, 0],\n  "y_offset": 0\n}'}
                             style={{ flex: 1, width: '100%', minHeight: 260, fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433' }}
                           />
                         </div>
@@ -1435,7 +1528,7 @@ export default function ManageElements() {
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: '0 0 auto' }}>
                           <button
                             type="button"
-                            title="Merge the calibrator values into placement_config"
+                            title="Merge the pasted values into placement_config"
                             disabled={!calibratorJson.trim()}
                             onClick={e => {
                               e.stopPropagation();
@@ -1443,10 +1536,11 @@ export default function ManageElements() {
                                 const v = JSON.parse(calibratorJson);
                                 const cur = JSON.parse(placementConfig);
                                 // Combined format: keys are already top_*/bottom_* — merge straight in.
-                                // Legacy format has a `target` + generic keys, mapped to one prefix.
+                                // Legacy piping format has a `target` + generic keys, mapped to one prefix.
+                                // Non-piping elements always take the plain shallow merge.
                                 const isCombined = Object.keys(v).some(k => k.startsWith('top_') || k.startsWith('bottom_'));
                                 let merged;
-                                if (isCombined) {
+                                if (!isPipingConfig || isCombined) {
                                   merged = { ...cur, ...v };
                                 } else {
                                   merged = { ...cur };
@@ -1460,7 +1554,7 @@ export default function ManageElements() {
                                   if (v.swagDepth     !== undefined) merged[`${p}_swag_depth`]    = v.swagDepth;
                                   if (v.swagTilt      !== undefined) merged[`${p}_swag_tilt`]     = v.swagTilt;
                                 }
-                                setPlacementConfig(JSON.stringify(merged, null, 2));
+                                onPcJsonEdit(JSON.stringify(merged, null, 2));
                                 setCalibratorJson('');
                               } catch { alert('Invalid JSON — check format and try again.'); }
                             }}
@@ -1477,7 +1571,7 @@ export default function ManageElements() {
                           <textarea
                             rows={14}
                             value={placementConfig}
-                            onChange={e => setPlacementConfig(e.target.value)}
+                            onChange={e => onPcJsonEdit(e.target.value)}
                             onClick={e => e.stopPropagation()}
                             onFocus={e => e.stopPropagation()}
                             onPointerDown={e => e.stopPropagation()}
@@ -1487,26 +1581,11 @@ export default function ManageElements() {
                         </div>
                       </div>
                       <div style={{ fontSize: 10, color: '#9aaa9e', marginTop: 4, fontFamily: "'Quicksand',sans-serif" }}>
-                        Paste the Calibrator output on the left → hit <b>Merge →</b> → it folds into placement_config on the right. Accepts the combined <code>top_*</code>/<code>bottom_*</code> format or the legacy single-<code>target</code> string. Saved as-is to the DB.
+                        {isPipingConfig
+                          ? <>Paste the Calibrator output on the left → hit <b>Merge →</b> → it folds into placement_config on the right. Accepts the combined <code>top_*</code>/<code>bottom_*</code> format or the legacy single-<code>target</code> string. Saved as-is to the DB.</>
+                          : <>Paste JSON on the left → hit <b>Merge →</b> → its keys fold into placement_config on the right (overwriting matching keys). Or edit the right side directly. Saved as-is to the DB.</>}
                       </div>
                     </>
-                  ) : (
-                    <>
-                      <textarea
-                        rows={12}
-                        value={placementConfig}
-                        onChange={e => setPlacementConfig(e.target.value)}
-                        onClick={e => e.stopPropagation()}
-                        onFocus={e => e.stopPropagation()}
-                        onPointerDown={e => e.stopPropagation()}
-                        spellCheck={false}
-                        style={{ width: '100%', fontFamily: 'monospace', fontSize: 11, borderRadius: 8, border: '1.5px solid #C5D4C8', padding: '8px 10px', boxSizing: 'border-box', resize: 'vertical', display: 'block', lineHeight: 1.6, color: '#2C4433', background: '#f9fbf9' }}
-                      />
-                      <div style={{ fontSize: 10, color: '#9aaa9e', marginTop: 4, fontFamily: "'Quicksand',sans-serif" }}>
-                        Edit directly. Saved as-is to the DB.
-                      </div>
-                    </>
-                  )}
                 </div>
 
                 {/* Baker craft guide (X-Ray) — sidecar table, saved independently */}
