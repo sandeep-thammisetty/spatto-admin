@@ -21,7 +21,7 @@ const CAKE_ZONES = [
 ];
 
 const PLACEMENT_MODES = [
-  { value: '',                label: 'hug (default)' },
+  { value: 'hug',             label: 'hug (default)' },   // explicit — saved as "hug", not omitted
   { value: 'stand',           label: 'stand' },
   { value: 'faux_ball_single',label: 'faux ball single' },
 ];
@@ -522,8 +522,10 @@ export default function AddElement() {
       if (assetType === '3D_GEOM') {
         builtPlacementConfig = { top_surface: 'faux_balls', side: 'faux_balls', roughness: glbRoughness, metalness: glbMetalness };
       } else {
+        // Write the chosen mode for EVERY applicable zone explicitly (default 'hug') — no more
+        // "absent means hug"; the config states each zone's mode so the designer never guesses.
         for (const zone of applicableZones) {
-          if (placementConfig[zone]) builtPlacementConfig[zone] = placementConfig[zone];
+          builtPlacementConfig[zone] = placementConfig[zone] || 'hug';
         }
         if (placementScale !== '') builtPlacementConfig.r = parseFloat(placementScale);
         // Placement STYLE: hero (one per tier×surface) vs. free scatter. Config-driven, never
@@ -918,7 +920,7 @@ export default function AddElement() {
                   return (
                     <div key={zone} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                       <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>{zoneLabel}</span>
-                      <select style={{ ...s.select, flex: 1 }} value={placementConfig[zone] ?? ''} onChange={e => setPlacementConfig(c => ({ ...c, [zone]: e.target.value }))}>
+                      <select style={{ ...s.select, flex: 1 }} value={placementConfig[zone] ?? 'hug'} onChange={e => setPlacementConfig(c => ({ ...c, [zone]: e.target.value }))}>
                         {PLACEMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                       </select>
                     </div>

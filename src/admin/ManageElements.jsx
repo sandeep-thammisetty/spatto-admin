@@ -20,7 +20,7 @@ const CAKE_ZONES = [
 ];
 
 const PLACEMENT_MODES = [
-  { value: '',                 label: 'hug (default)' },
+  { value: 'hug',              label: 'hug (default)' },   // explicit — saved as "hug", not omitted
   { value: 'stand',            label: 'stand' },
   { value: 'faux_ball_single', label: 'faux ball single' },
   { value: 'faux_balls',       label: 'faux balls' },
@@ -634,11 +634,10 @@ export default function ManageElements() {
         setSaving(false);
         return;
       }
-      // Merge zone config
-      applicableZones.forEach(z => {
-        if (placementZoneConfig[z]) parsedConfig[z] = placementZoneConfig[z];
-        else delete parsedConfig[z];
-      });
+      // Merge zone config — write the chosen mode for EVERY applicable zone, explicitly (default
+      // 'hug'). No more "absent means hug": the saved config states the mode for each zone, so the
+      // designer never has to guess. (Existing config still wins via the designer's spread/backfill.)
+      applicableZones.forEach(z => { parsedConfig[z] = placementZoneConfig[z] || 'hug'; });
       if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
       else delete parsedConfig.r;
       // Placement STYLE (hero = one instance per tier×surface vs. free scatter). Config-driven,
@@ -1470,7 +1469,7 @@ export default function ManageElements() {
                             <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>{zoneLabel}</span>
                             <select
                               style={{ ...s.select, flex: 1 }}
-                              value={placementZoneConfig[zone] ?? ''}
+                              value={placementZoneConfig[zone] ?? 'hug'}
                               onChange={e => { const v = e.target.value; setPlacementZoneConfig(c => ({ ...c, [zone]: v })); patchPc({ [zone]: v }); }}>
                               {PLACEMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                             </select>

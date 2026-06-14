@@ -733,7 +733,7 @@ export default function PipingCalibrator() {
   const [creating, setCreating]   = useState(false);
   const [msg, setMsg]             = useState(null);
   const captureRef = useRef(null);
-  const thumbRef = useRef(null);
+  const shotRef = useRef(null);   // offscreen clean canvas (transparent bg, no floor) → screenshot
   // Cake body colour (picker) — drives both the live preview and the captured thumbnail.
   const [cakeColor, setCakeColor] = useState(STANDARD_CAKE_COLOR);
   // Element (cream) colour — drives the piped element in the preview + thumbnail.
@@ -742,18 +742,17 @@ export default function PipingCalibrator() {
   const cfg    = target === 'board' ? boardCfg : rimCfg;
   const setCfg = target === 'board' ? setBoardCfg : setRimCfg;
 
-  // Capture a clean element thumbnail from the dedicated offscreen canvas — transparent
-  // background, no floor — then crop it to the cake + piping with normalizeThumbnail (the same
-  // crop the pattern thumbnails use) and download. Faithful to the tuned look (bend included),
-  // but framed/cropped like the originals instead of grabbing the whole live canvas.
+  // Download the cake on its own — the full cake, board, and placed element with NO canvas
+  // background or floor. Rendered on a dedicated offscreen canvas (transparent, no floor, framed
+  // like the live view) then cropped to the cake's bounds so there's no empty margin.
   async function captureScreenshot() {
-    const canvas = thumbRef.current?.querySelector('canvas');
-    if (!canvas) { setMsg({ ok: false, text: 'Thumbnail preview not ready — try again.' }); return; }
+    const canvas = shotRef.current?.querySelector('canvas');
+    if (!canvas) { setMsg({ ok: false, text: 'Capture canvas not ready — try again.' }); return; }
     const raw = await new Promise(r => canvas.toBlob(r, 'image/png'));
     const thumb = await normalizeThumbnail(raw);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(thumb);
-    a.download = `piping-${target}-${Date.now()}.png`;
+    a.download = `calibrator-${target}-${Date.now()}.png`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -1183,9 +1182,8 @@ export default function PipingCalibrator() {
                 </button>
                 <div style={{ borderTop: '1px solid #D8E2DB', margin: '12px 0 8px' }} />
                 <div style={{ fontSize: 10, color: '#9BB5A2', marginBottom: 8, lineHeight: 1.5 }}>
-                  Saves a clean, cropped PNG of the tuned piece (bend/swag included) on a transparent
-                  background — auto-framed and cropped like the pattern thumbnails. Use it as the element’s
-                  thumbnail.
+                  Downloads a PNG of the cake on its own — full cake, board, and the placed element on a
+                  transparent background (no canvas backdrop or floor), cropped to the cake.
                 </div>
                 <button onClick={captureScreenshot} disabled={!activeGlbUrl}
                   style={{ width: '100%', padding: '8px 0', background: activeGlbUrl ? '#9B5F72' : '#d8c2cb', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: activeGlbUrl ? 'pointer' : 'default', fontFamily: "'Quicksand',sans-serif" }}>
@@ -1265,14 +1263,14 @@ export default function PipingCalibrator() {
           </div>
         )}
 
-        {/* Hidden thumbnail capture canvas (tune mode) — transparent bg, NO floor, framed on the
-            cake front so "Download screenshot" crops cleanly to the cake + piping (bend included),
-            instead of grabbing the whole live canvas with its floor and empty background. */}
+        {/* Hidden "clean" capture canvas (tune mode) — the SAME framing as the live view (whole
+            cake + board + element), but on a TRANSPARENT background with NO floor, so "Download
+            screenshot" yields just the cake (cropped to its bounds), not the canvas backdrop. */}
         {mode === 'tune' && activeGlbUrl && (
-          <div ref={thumbRef} style={{ position: 'absolute', left: -9999, top: -9999, width: 512, height: 512 }}>
-            <Canvas shadows gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 3.4, 5.4], fov: 38 }} style={{ width: 512, height: 512, background: 'transparent' }}>
-              <ambientLight intensity={0.75} />
-              <directionalLight position={[5, 10, 5]} intensity={1.4} />
+          <div ref={shotRef} style={{ position: 'absolute', left: -9999, top: -9999, width: 768, height: 768 }}>
+            <Canvas shadows gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 5.5, 7.9], fov: 42 }} style={{ width: 768, height: 768, background: 'transparent' }}>
+              <ambientLight intensity={0.7} />
+              <directionalLight position={[5, 10, 5]} intensity={1.4} castShadow />
               <directionalLight position={[-3, 3, -3]} intensity={0.3} />
               <Suspense fallback={null}>
                 <Environment preset="apartment" />
@@ -1284,9 +1282,11 @@ export default function PipingCalibrator() {
                   <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} shape={shape} color={elementColor} />
                 )}
               </Suspense>
+              <OrbitControls target={[0, 2, 0]} enableZoom={false} enablePan={false} enableRotate={false} />
             </Canvas>
           </div>
         )}
+
       </div>
     </div>
   );
