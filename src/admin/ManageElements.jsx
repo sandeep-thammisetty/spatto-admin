@@ -440,6 +440,10 @@ export default function ManageElements() {
   const [newAssetFile,     setNewAssetFile]     = useState(null);
   const [altAssetFile,     setAltAssetFile]     = useState(null);   // alternate piping shape (version B)
   const [newThumbBlob,     setNewThumbBlob]     = useState(null);
+  // True only when the staged thumbnail is a DELIBERATE choice (manual upload, or a 2D image
+  // replace). The 3D preview auto-captures a blob on load just to show a live preview — that is
+  // NOT deliberate, so plain "Save" must ignore it (only "Save + Thumbnail" persists it).
+  const [thumbManual,      setThumbManual]      = useState(false);
   const [removingBg,       setRemovingBg]       = useState(false);
   const [glbColor,         setGlbColor]         = useState('#F0DEB8');
   const [userPickedColor,  setUserPickedColor]  = useState(false);
@@ -498,6 +502,7 @@ export default function ManageElements() {
     setIsActive(el.is_active ?? true);
     setNewAssetFile(null);
     setNewThumbBlob(null);
+    setThumbManual(false);
     setMsg(null);
     setUserPickedColor(false);
     setGlbColor('#F0DEB8');
@@ -542,6 +547,8 @@ export default function ManageElements() {
   function captureThumbnail() {
     const canvas = canvasRef.current?.querySelector('canvas');
     if (!canvas) return;
+    // Auto-capture from the 3D preview — for the live preview only, not a deliberate save.
+    setThumbManual(false);
     canvas.toBlob(blob => processRemoveBg(blob), 'image/png');
   }
 
@@ -691,11 +698,11 @@ export default function ManageElements() {
         updates.placement_config = parsedConfig;
       }
 
-      // Upload a NEW thumbnail whenever one has been staged — captured from the canvas OR
-      // uploaded manually. Either is an explicit change, so both Save buttons persist it (the
-      // remove.bg credit, if any, was already spent at capture time, not here). Without a staged
-      // blob the existing thumbnail_url is left untouched, so routine data edits keep their image.
-      if (newThumbBlob) {
+      // Persist a new thumbnail only when it's a deliberate change: the user clicked
+      // "Save + Thumbnail" (withThumbnail), OR they manually uploaded/replaced one (thumbManual).
+      // The 3D preview auto-stages a blob on load purely for the live preview — plain "Save" must
+      // NOT upload that, so routine data edits keep the existing thumbnail untouched.
+      if (newThumbBlob && (withThumbnail || thumbManual)) {
         const filename = `${crypto.randomUUID()}.png`;
         const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
         await uploadToR2(url, newThumbBlob);
@@ -721,6 +728,7 @@ export default function ManageElements() {
       setNewAssetFile(null);
       setAltAssetFile(null);
       setNewThumbBlob(null);
+      setThumbManual(false);
       await loadAll();
     } catch (err) {
       setMsg({ ok: false, text: err.message });
@@ -1303,7 +1311,7 @@ export default function ManageElements() {
                           const f = e.target.files[0];
                           if (!f) return;
                           setNewAssetFile(f);
-                          if (!isGlb) processRemoveBg(f);
+                          if (!isGlb) { setThumbManual(true); processRemoveBg(f); }
                           setUserPickedColor(false);
                         }}
                       />
@@ -1348,7 +1356,7 @@ export default function ManageElements() {
                       on a captured thumbnail). Matches AddElement's custom-thumbnail upload. */}
                   <label style={{ ...s.fileBox, padding: '12px 16px', marginTop: 6 }}>
                     <input type="file" accept="image/*" style={{ display: 'none' }}
-                      onChange={e => { if (e.target.files[0]) setNewThumbBlob(e.target.files[0]); }} />
+                      onChange={e => { if (e.target.files[0]) { setNewThumbBlob(e.target.files[0]); setThumbManual(true); } }} />
                     <span style={{ fontSize: 12, color: '#6B8C74', fontWeight: 600 }}>
                       {newThumbBlob ? 'Replace thumbnail again…' : 'Replace thumbnail…'}
                     </span>
@@ -1363,6 +1371,7 @@ export default function ManageElements() {
                       { key: 'resize',    label: 'Resizable',        hint: '+/− size buttons in edit strip' },
                       { key: 'duplicate', label: 'Duplicatable',     hint: 'Copy button creates another instance' },
                       { key: 'color',     label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
+                      { key: 'gradient',  label: 'Gradient colors',  hint: 'Customer can blend up to 3 colors (swirl / vertical / linear) — for swirls & ombré (GLB only)' },
                       { key: 'delete',    label: 'Deletable',        hint: 'Remove button shown when selected' },
                       { key: 'move',      label: 'Movable',          hint: 'Nudge ◀▶▲▼ position on the cake' },
                       { key: 'tilt',      label: 'Tiltable',         hint: 'Lean / rotate slightly in the designer' },

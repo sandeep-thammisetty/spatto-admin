@@ -275,7 +275,7 @@ export default function AddElement() {
   const [placementScale, setPlacementScale]   = useState('');
   const [singlePerSlot,  setSinglePerSlot]    = useState(false);
   const [hugFill,        setHugFill]          = useState('');
-  const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, delete: true, move: false, tilt: false });
+  const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, gradient: false, delete: true, move: false, tilt: false });
   const [glbRotation, setGlbRotation]         = useState([0, 0, 0]);
   const [frontConfirmed, setFrontConfirmed]   = useState(false);
   const [pipingBottomFlip, setPipingBottomFlip] = useState(true);
@@ -971,6 +971,7 @@ export default function AddElement() {
                 { key: 'resize',    label: 'Resizable',        hint: '＋/− size buttons in edit strip' },
                 { key: 'duplicate', label: 'Duplicatable',     hint: 'Copy button creates another instance with same size and color' },
                 { key: 'color',     label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
+                { key: 'gradient',  label: 'Gradient colors',  hint: 'Customer can blend up to 3 colors (swirl / vertical / linear) — for swirls & ombré (GLB only)' },
                 { key: 'delete',    label: 'Deletable',        hint: 'Remove button shown when selected' },
                 { key: 'move',      label: 'Movable',          hint: 'Nudge ◀▶▲▼ position on the cake' },
                 { key: 'tilt',      label: 'Tiltable',         hint: 'Lean / rotate slightly in the designer' },
