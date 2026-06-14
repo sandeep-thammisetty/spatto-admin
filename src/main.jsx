@@ -209,7 +209,7 @@ function Router({ session }) {
             { href: '/plans',                 label: 'Subscription Plans' },
             { href: '/flavours',              label: 'Cake Flavours' },
             { href: '/pattern-builder',       label: 'Pattern Builder' },
-            { href: '/elements/piping-calibrator', label: '🍰 Piping Calibrator' },
+            { href: '/elements/piping-calibrator', label: 'Calibrator' },
             { href: '/elements/cream-pen',         label: '🖊️ Cream Pen' },
             { href: '/elements/freehand-pen',      label: '✍️ Freehand Pen' },
           ].map(({ href, label }) => (

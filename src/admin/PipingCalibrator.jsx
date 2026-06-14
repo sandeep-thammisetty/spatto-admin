@@ -263,7 +263,7 @@ function extractGeo(scene) {
 
 // ── Single positioned piece / ring (with optional A/B alternation) ─────────────
 // MUST stay identical to BottomPipingRing/TopPipingRing in spattoo-core CakeTier.jsx.
-function buildShellGeo(scene, flip) {
+function buildShellGeo(scene, flip, sizeFactor = 1) {
   const result = extractGeo(scene);
   if (!result) return null;
   const geo = result.geo;
@@ -272,19 +272,19 @@ function buildShellGeo(scene, flip) {
     geo.computeBoundingBox();
     geo.translate(0, -geo.boundingBox.min.y, 0);
   }
-  const sc = (CAKE_RADIUS * 0.24) / result.sizeY;
+  const sc = (CAKE_RADIUS * 0.24) / result.sizeY * (sizeFactor ?? 1);
   geo.computeBoundingBox();
   const bb = new THREE.Vector3(); geo.boundingBox.getSize(bb);
   return { geometry: geo, shellScale: sc, bbDepth: bb.z, bbWidth: bb.x };
 }
 
-function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape = null }) {
+function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape = null, color = DEFAULT_ELEMENT_COLOR }) {
   const { scene } = useGLTF(glbUrl);
   const { scene: sceneAlt } = useGLTF(altGlbUrl || glbUrl);
 
-  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom), [scene, cfg.flipBottom]);
-  const B = useMemo(() => (cfg.altEnabled ? buildShellGeo(sceneAlt, cfg.altFlip) : null),
-    [cfg.altEnabled, sceneAlt, cfg.altFlip]);
+  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom, cfg.sizeFactor), [scene, cfg.flipBottom, cfg.sizeFactor]);
+  const B = useMemo(() => (cfg.altEnabled ? buildShellGeo(sceneAlt, cfg.altFlip, cfg.sizeFactor) : null),
+    [cfg.altEnabled, sceneAlt, cfg.altFlip, cfg.sizeFactor]);
 
   const pattern = patternStr(cfg);
   const altActive = cfg.altEnabled;
@@ -349,7 +349,7 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
   if (wrapGeo) {
     return (
       <mesh geometry={wrapGeo} castShadow>
-        <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, '#f5e6c8')} />
+        <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, color)} />
       </mesh>
     );
   }
@@ -361,7 +361,7 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
       <>
         {festoonGeos.map((g, i) => (
           <mesh key={i} geometry={g} castShadow>
-            <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, '#f5e6c8')} />
+            <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, color)} />
           </mesh>
         ))}
       </>
@@ -390,7 +390,7 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
           <group key={i} position={pos} quaternion={u.tq}>
             <group rotation={[0, -u.rotY + Math.PI / 2 + (isB ? ryB : ryA), 0]}>
               <mesh geometry={ver.geometry} rotation={isB ? meshB : meshA} scale={ver.shellScale} castShadow>
-                <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, '#f5e6c8')} />
+                <meshPhysicalMaterial {...creamMaterialProps(cfg.softness, color)} />
               </mesh>
             </group>
           </group>
@@ -411,8 +411,8 @@ function CalibScene({ glbUrl, cfg, showRing, anchorY, inward, altGlbUrl, shape =
 export function BuildingBlockScene({ glbUrl, altGlbUrl, cfg, overlap = 0.9, shellCount = 2, color = '#f5e6c8' }) {
   const { scene }          = useGLTF(glbUrl);
   const { scene: sceneAlt } = useGLTF(altGlbUrl || glbUrl);
-  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom), [scene, cfg.flipBottom]);
-  const B = useMemo(() => buildShellGeo(sceneAlt, cfg.altFlip), [sceneAlt, cfg.altFlip]);
+  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom, cfg.sizeFactor), [scene, cfg.flipBottom, cfg.sizeFactor]);
+  const B = useMemo(() => buildShellGeo(sceneAlt, cfg.altFlip, cfg.sizeFactor), [sceneAlt, cfg.altFlip, cfg.sizeFactor]);
   if (!A) return null;
   const pattern = patternStr(cfg);
   const L = pattern.length;
@@ -472,8 +472,8 @@ export function PatternCakeThumb({
   const { scene }          = useGLTF(glbUrl);
   const { scene: sceneAlt } = useGLTF(altGlbUrl || glbUrl);
   const isTop = zone === 'rim';
-  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom), [scene, cfg.flipBottom]);
-  const B = useMemo(() => buildShellGeo(sceneAlt, cfg.altFlip), [sceneAlt, cfg.altFlip]);
+  const A = useMemo(() => buildShellGeo(scene, cfg.flipBottom, cfg.sizeFactor), [scene, cfg.flipBottom, cfg.sizeFactor]);
+  const B = useMemo(() => buildShellGeo(sceneAlt, cfg.altFlip, cfg.sizeFactor), [sceneAlt, cfg.altFlip, cfg.sizeFactor]);
   const pattern = patternStr(cfg);
   const L = pattern.length;
   const anchorY = isTop ? (Y_BASE + CAKE_HEIGHT) : Y_BASE;
@@ -536,6 +536,9 @@ export function PatternCakeThumb({
 // `shape` null → round cylinder; { kind:'rect', halfW, halfD, cornerR } → sheet cake.
 // Default cake body colour — the picker's starting value and its "Reset" target.
 const STANDARD_CAKE_COLOR = '#f5c6d0';
+// Default element (cream) colour — matches the cream the shells/festoons/wrap rendered before
+// the element-colour picker existed.
+const DEFAULT_ELEMENT_COLOR = '#f5e6c8';
 
 function CakeScene({ shape = null, floor = true, cakeColor = STANDARD_CAKE_COLOR }) {
   const isRect = shape?.kind === 'rect';
@@ -604,6 +607,7 @@ const DEFAULT_TARGET_CFG = {
   radialOffset: 0,
   yOffset:      0,
   spacing:      1,   // shell gap multiplier: 1 = touching/default, >1 = wider gaps (fewer shells)
+  sizeFactor:   1,   // preview scale of the element (1 = the designer's base size)
   softness:     PIPING_SOFTNESS_DEFAULT, // 0 glossy/wet … 0.7 default … 1 matte/whipped
   swagCount:    0,   // festoons around the ring (0 = flat ring, no swag). 2–3 = big U drapes.
   swagDepth:    0.4, // how far each festoon hangs (cake units)
@@ -732,6 +736,8 @@ export default function PipingCalibrator() {
   const thumbRef = useRef(null);
   // Cake body colour (picker) — drives both the live preview and the captured thumbnail.
   const [cakeColor, setCakeColor] = useState(STANDARD_CAKE_COLOR);
+  // Element (cream) colour — drives the piped element in the preview + thumbnail.
+  const [elementColor, setElementColor] = useState(DEFAULT_ELEMENT_COLOR);
 
   const cfg    = target === 'board' ? boardCfg : rimCfg;
   const setCfg = target === 'board' ? setBoardCfg : setRimCfg;
@@ -847,7 +853,7 @@ export default function PipingCalibrator() {
       {/* ── Left: controls ─────────────────────────────────────────────── */}
       <div style={{ width: 320, flexShrink: 0, overflowY: 'auto', background: '#fff', borderRight: '1.5px solid #E8EFE9', padding: 20, position: 'relative', zIndex: 10 }}>
 
-        <div style={{ fontSize: 15, fontWeight: 800, color: '#2C4433', marginBottom: 12 }}>Piping Calibrator</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: '#2C4433', marginBottom: 12 }}>Calibrator</div>
 
         {/* Sample cake shape — check the pattern on a round or sheet cake (preview only) */}
         <div style={{ marginBottom: 14 }}>
@@ -955,6 +961,21 @@ export default function PipingCalibrator() {
               </div>
             </div>
 
+            {/* Element (cream) colour — drives the piped element in the preview + thumbnail */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Element colour</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="color" value={elementColor} onChange={e => setElementColor(e.target.value)}
+                  style={{ width: 34, height: 26, padding: 0, border: '1.5px solid #C5D4C8', borderRadius: 6, background: '#fff', cursor: 'pointer' }} />
+                {elementColor.toLowerCase() !== DEFAULT_ELEMENT_COLOR && (
+                  <button onClick={() => setElementColor(DEFAULT_ELEMENT_COLOR)}
+                    style={{ fontSize: 10, padding: '4px 8px', border: '1px solid #C5D4C8', borderRadius: 4, background: '#fff', cursor: 'pointer', color: '#9BB5A2', fontFamily: "'Quicksand',sans-serif", fontWeight: 700 }}>
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Flip */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>Flip (180° X on geometry)</span>
@@ -972,8 +993,11 @@ export default function PipingCalibrator() {
 
             {/* Position tweaks */}
             <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>Position</div>
-            <Slider label="Radial offset" value={cfg.radialOffset} min={-0.3} max={0.5} step={0.01} onChange={set('radialOffset')} />
+            <Slider label="Radial offset" value={cfg.radialOffset} min={-1.5} max={0.5} step={0.01} onChange={set('radialOffset')} />
             <Slider label="Y offset" value={cfg.yOffset} min={-0.2} max={1.2} step={0.01} onChange={set('yOffset')} />
+            {!cfg.wrap && (
+              <Slider label="Size" value={cfg.sizeFactor} min={0.3} max={3} step={0.05} resetTo={1} onChange={set('sizeFactor')} color="#e0a052" />
+            )}
             <Slider label="Spacing" value={cfg.spacing} min={0.5} max={2.5} step={0.05} resetTo={1} onChange={set('spacing')} />
             <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
               Gap between shells. 1 = touching (default). Higher = wider gaps & fewer shells.
@@ -1000,7 +1024,7 @@ export default function PipingCalibrator() {
             {cfg.wrap && <>
               <Slider label="Size" value={cfg.wrapSize} min={0.2} max={2} step={0.05} resetTo={1} onChange={set('wrapSize')} color="#e0a052" />
               <Slider label="Tilt" value={cfg.wrapTilt} min={-90} max={90} step={1} resetTo={0} onChange={set('wrapTilt')} color="#c47ad6" />
-              <Slider label="Radial offset" value={cfg.radialOffset} min={-0.3} max={0.5} step={0.01} resetTo={0} onChange={set('radialOffset')} />
+              <Slider label="Radial offset" value={cfg.radialOffset} min={-1.5} max={0.5} step={0.01} resetTo={0} onChange={set('radialOffset')} />
               <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
                 Wraps the whole ring around the cake wall as one band — auto-fits the tier (round <i>or</i> sheet),
                 no repeating shells. <b>Size</b> scales the band's height &amp; thickness (lower = slimmer).
@@ -1116,7 +1140,7 @@ export default function PipingCalibrator() {
               <Slider label="Alt X rotation" value={cfg.altRx} min={-180} max={180} onChange={set('altRx')} color="#e05252" />
               <Slider label="Alt Y rotation" value={cfg.altRy} min={-180} max={180} onChange={set('altRy')} color="#52c452" />
               <Slider label="Alt Z rotation" value={cfg.altRz} min={-180} max={180} onChange={set('altRz')} color="#5252e0" />
-              <Slider label="Alt radial" value={cfg.altRadialOffset} min={-0.3} max={0.5} step={0.01} onChange={set('altRadialOffset')} />
+              <Slider label="Alt radial" value={cfg.altRadialOffset} min={-1.5} max={0.5} step={0.01} onChange={set('altRadialOffset')} />
               <Slider label="Alt Y offset" value={cfg.altYOffset} min={-0.2} max={1.2} step={0.01} onChange={set('altYOffset')} />
               <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
                 Version B alternates with the original per the ratio above. The alternate GLB url is set
@@ -1207,10 +1231,10 @@ export default function PipingCalibrator() {
           <Suspense fallback={null}>
             {/* Both rings render together; a ring shows when it's included OR being edited. */}
             {activeGlbUrl && (includeBoard || target === 'board') && (
-              <CalibScene glbUrl={activeGlbUrl} cfg={boardCfg} showRing={showRing} anchorY={Y_BASE} inward={false} altGlbUrl={altBlobUrl} shape={shape} />
+              <CalibScene glbUrl={activeGlbUrl} cfg={boardCfg} showRing={showRing} anchorY={Y_BASE} inward={false} altGlbUrl={altBlobUrl} shape={shape} color={elementColor} />
             )}
             {activeGlbUrl && (includeRim || target === 'rim') && (
-              <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing={showRing} anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} shape={shape} />
+              <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing={showRing} anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} shape={shape} color={elementColor} />
             )}
           </Suspense>
 
@@ -1234,7 +1258,7 @@ export default function PipingCalibrator() {
               <directionalLight position={[-3, 2, 1]} intensity={0.4} />
               <Suspense fallback={null}>
                 <Environment preset="apartment" />
-                <BuildingBlockScene glbUrl={activeGlbUrl} altGlbUrl={null} cfg={target === 'rim' ? rimCfg : boardCfg} />
+                <BuildingBlockScene glbUrl={activeGlbUrl} altGlbUrl={null} cfg={target === 'rim' ? rimCfg : boardCfg} color={elementColor} />
               </Suspense>
               <OrbitControls target={[0, 0.14, 0]} enableZoom={false} enablePan={false} enableRotate={false} />
             </Canvas>
@@ -1254,10 +1278,10 @@ export default function PipingCalibrator() {
                 <Environment preset="apartment" />
                 <CakeScene shape={shape} floor={false} cakeColor={cakeColor} />
                 {(includeBoard || target === 'board') && (
-                  <CalibScene glbUrl={activeGlbUrl} cfg={boardCfg} showRing anchorY={Y_BASE} inward={false} altGlbUrl={altBlobUrl} shape={shape} />
+                  <CalibScene glbUrl={activeGlbUrl} cfg={boardCfg} showRing anchorY={Y_BASE} inward={false} altGlbUrl={altBlobUrl} shape={shape} color={elementColor} />
                 )}
                 {(includeRim || target === 'rim') && (
-                  <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} shape={shape} />
+                  <CalibScene glbUrl={activeGlbUrl} cfg={rimCfg} showRing anchorY={Y_BASE + CAKE_HEIGHT} inward={true} altGlbUrl={altBlobUrl} shape={shape} color={elementColor} />
                 )}
               </Suspense>
             </Canvas>
