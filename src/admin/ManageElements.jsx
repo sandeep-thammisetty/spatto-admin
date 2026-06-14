@@ -288,14 +288,23 @@ function cameraToModelRotation({ camera, controls }, preTransformEuler = null) {
     q.multiply(qPre.invert());
   }
   const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
-  // Return RADIANS. The designer feeds placement_config.rotation straight into THREE.Euler,
-  // which is radians — so this MUST be radians too. (It used to return degrees, ~57× too big,
-  // which is why every GLB oriented with this widget came out wildly spun in the designer.)
-  return [e.x, e.y, e.z];
+  // Return DEGREES — the unified facing-offset unit (the calibrator/AddElement convention). The
+  // designer reads placement_config.rotation via facingOffsetRadians (gated by rotation_unit:'deg')
+  // and converts to the radians THREE.Euler wants. See spattoo-core placement.js / PLACEMENT_CONFIG.md.
+  return [e.x, e.y, e.z].map(v => normDeg360(v * RAD_TO_DEG));
 }
 
-// glbRotation is stored in radians (designer's unit); show it in degrees for humans.
-const radToDeg360 = r => ((r * 180 / Math.PI) % 360 + 360) % 360;
+// glbRotation is kept in DEGREES (the authored unit). normDeg360 keeps it in [0,360).
+const RAD_TO_DEG  = 180 / Math.PI;
+const normDeg360  = d => ((d % 360) + 360) % 360;
+
+// Read placement_config.rotation as a DEGREES triple for the UI, converting legacy un-flagged rows
+// (radians — ManageElements' historical output) so editing + re-saving normalizes them to deg+flag.
+function rotationToDegrees(pc) {
+  const r = pc?.rotation;
+  if (!Array.isArray(r)) return [0, 0, 0];
+  return (pc.rotation_unit === 'deg' ? r : r.map(v => v * RAD_TO_DEG)).map(normDeg360);
+}
 
 function GLBModel({ url, color, roughness, metalness, onLoad, onTextureDetected, onMaterialRead }) {
   const { scene } = useGLTF(url);
@@ -510,7 +519,7 @@ export default function ManageElements() {
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
     setPatternOnly(pc.pattern_only === true);
     setGlbEnvPreset('none');
-    setGlbRotation(pc.rotation ?? [0, 0, 0]);
+    setGlbRotation(rotationToDegrees(pc));   // degrees for the UI; converts legacy radians rows
     setCalibratorJson('');
     setFrontConfirmed(false);
     setRotationDirty(false);
@@ -573,11 +582,10 @@ export default function ManageElements() {
     setSinglePerSlot(pc.single_per_slot === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
     setPatternOnly(pc.pattern_only === true);
-    // Keep glbRotation in lockstep with the JSON. handleSave rewrites rotation from
-    // glbRotation, so without this an edit to `rotation` in the textarea is silently
-    // reverted to the old value on save. (radians, THREE.Euler — see spattoo-core.)
-    if (Array.isArray(pc.rotation)) setGlbRotation(pc.rotation);
-    else setGlbRotation([0, 0, 0]);
+    // Keep glbRotation in lockstep with the JSON. handleSave rewrites rotation from glbRotation,
+    // so without this an edit to `rotation` in the textarea is silently reverted on save. UI unit
+    // is degrees; rotationToDegrees honours the JSON's rotation_unit (legacy rows = radians).
+    setGlbRotation(rotationToDegrees(pc));
   }
   function onPcJsonEdit(text) {
     setPlacementConfig(text);
@@ -636,8 +644,15 @@ export default function ManageElements() {
       // Building-block part of a pattern — hidden from the picker, placed via its parent pattern.
       if (patternOnly) parsedConfig.pattern_only = true;
       else delete parsedConfig.pattern_only;
-      if (glbRotation.some(v => v !== 0)) parsedConfig.rotation = glbRotation;
-      else delete parsedConfig.rotation;
+      // Facing offset persisted in DEGREES + rotation_unit:'deg' (unified with AddElement and the
+      // piping calibrator; read by the designer via facingOffsetRadians). Clearing it drops both.
+      if (glbRotation.some(v => v !== 0)) {
+        parsedConfig.rotation      = glbRotation.map(v => Math.round(v));
+        parsedConfig.rotation_unit = 'deg';
+      } else {
+        delete parsedConfig.rotation;
+        delete parsedConfig.rotation_unit;
+      }
       // piping fields live directly in the placement_config JSON — no extra merge needed
 
       const updates = {
@@ -1176,9 +1191,9 @@ export default function ManageElements() {
                           <div key={axis} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                             <span style={{ fontSize: 11, fontWeight: 700, color: axisColor, width: 14, flexShrink: 0 }}>{axis}</span>
                             <div style={{ flex: 1, height: 4, background: '#e8ede9', borderRadius: 2, position: 'relative' }}>
-                              <div style={{ width: `${(radToDeg360(glbRotation[idx]) / 359) * 100}%`, height: '100%', background: axisColor, borderRadius: 2 }} />
+                              <div style={{ width: `${(normDeg360(glbRotation[idx]) / 359) * 100}%`, height: '100%', background: axisColor, borderRadius: 2 }} />
                             </div>
-                            <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, minWidth: 32, textAlign: 'right' }}>{Math.round(radToDeg360(glbRotation[idx]))}°</span>
+                            <span style={{ fontSize: 11, color: '#6B8C74', fontWeight: 600, minWidth: 32, textAlign: 'right' }}>{Math.round(normDeg360(glbRotation[idx]))}°</span>
                           </div>
                         ))}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>

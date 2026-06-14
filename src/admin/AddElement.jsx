@@ -532,8 +532,13 @@ export default function AddElement() {
         // Hero side-hug size = this fraction of the tier wall height (designer derives it at
         // render time; r is the stand size only). Blank → designer default (0.7).
         if (hugFill !== '') builtPlacementConfig.hug_fill = parseFloat(hugFill);
-        if (assetType === '3D' && glbRotation.some(v => v !== 0))
-          builtPlacementConfig.rotation = glbRotation;
+        // Facing offset is authored in DEGREES (cameraToModelRotation → toDeg). Tag the unit so
+        // the designer reads it via facingOffsetRadians instead of mistaking degrees for radians
+        // (the ~57× over-spin this used to cause). See spattoo-core placement.js / PLACEMENT_CONFIG.md.
+        if (assetType === '3D' && glbRotation.some(v => v !== 0)) {
+          builtPlacementConfig.rotation      = glbRotation.map(v => Math.round(v));
+          builtPlacementConfig.rotation_unit = 'deg';
+        }
         if (assetType === '3D' && isPipingType) {
           builtPlacementConfig.bottom_flip = pipingBottomFlip;
           // Flexible out of the box: both layouts allowed, default ring. Admins refine
