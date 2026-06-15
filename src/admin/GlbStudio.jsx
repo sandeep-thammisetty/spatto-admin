@@ -937,7 +937,7 @@ export default function GlbStudio() {
                   {pieces.map(p => (
                     <div key={p.id} style={s.meshRow(selectedPiece === p.id)}
                       onClick={() => setSelectedPiece(selectedPiece === p.id ? null : p.id)}>
-                      <span style={{ fontSize: 14 }}>{selectedPiece === p.id ? '🎯' : '🧩'}</span>
+                      <span style={{ fontSize: 12, color: selectedPiece === p.id ? '#3D5A44' : '#C5D4C8' }}>{selectedPiece === p.id ? '●' : '○'}</span>
                       <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#2C4433', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
                       <button onClick={e => { e.stopPropagation(); togglePieceFlatten(p.id); }} title="Include this piece when flattening the back"
                         style={{ padding: '3px 8px', borderRadius: 6, border: `1.5px solid ${p.flatten !== false ? '#3D5A44' : '#C5D4C8'}`, background: p.flatten !== false ? '#E8EDE9' : '#fff', color: p.flatten !== false ? '#2C4433' : '#9BB5A2', fontFamily: 'Quicksand, sans-serif', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>flat</button>
@@ -1020,7 +1020,7 @@ export default function GlbStudio() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                       <input type="checkbox" checked={showCake} onChange={e => setShowCake(e.target.checked)} style={{ width: 16, height: 16, accentColor: '#3D5A44' }} />
-                      <span style={{ fontSize: 12, fontWeight: 800, color: '#2C4433' }}>🎂 Show cake</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: '#2C4433' }}>Show cake</span>
                     </label>
                     {showCake && (
                       <>
@@ -1055,7 +1055,7 @@ export default function GlbStudio() {
               )}
               {/* selected-piece label (top-left) */}
               <div style={{ position: 'absolute', top: 12, left: 12, background: 'rgba(255,255,255,0.92)', border: '1.5px solid #C5D4C8', borderRadius: 10, padding: '6px 12px', fontSize: 13, fontWeight: 800, color: selectedPiece ? '#2563eb' : '#6B8C74', maxWidth: '46%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
-                {selectedPiece ? `🎯 ${pieces.find(p => p.id === selectedPiece)?.name}` : (root ? 'Click a piece to select' : 'Add a piece to begin')}
+                {selectedPiece ? `${pieces.find(p => p.id === selectedPiece)?.name}` : (root ? 'Click a piece to select' : 'Add a piece to begin')}
               </div>
               {/* transform panel (top-right) — moves the selected piece */}
               {selectedPiece && (
@@ -1096,7 +1096,7 @@ export default function GlbStudio() {
             </div>
 
             <button style={s.exportBtn(busy || !root)} onClick={exportGLB} disabled={busy || !root}>
-              {busy ? 'Working…' : '⬇ Export merged GLB'}
+              {busy ? 'Working…' : 'Export merged GLB'}
             </button>
             <div style={s.hint}>One .glb merging all pieces, each its own part. Pick it in the Piping Calibrator to test on a cake.</div>
           </div>
@@ -1119,7 +1119,7 @@ export default function GlbStudio() {
                     <option value="selected">Selected piece only</option>
                   </select>
                 </div>
-                <button style={s.exportBtn(busy || (optScope === 'selected' && !selectedPiece))} onClick={optimize} disabled={busy || (optScope === 'selected' && !selectedPiece)}>{busy ? 'Optimizing…' : (optScope === 'selected' ? '⚡ Optimize selected' : '⚡ Optimize all')}</button>
+                <button style={s.exportBtn(busy || (optScope === 'selected' && !selectedPiece))} onClick={optimize} disabled={busy || (optScope === 'selected' && !selectedPiece)}>{busy ? 'Optimizing…' : (optScope === 'selected' ? 'Optimize selected' : 'Optimize all')}</button>
                 <div style={s.hint}>Bakes the texture into vertex colors (no shatter on the mane), then decimates. No texture file = lighter. Run once; clear & re-add to redo.</div>
                 {optMsg && <div style={optMsg.ok ? { ...s.err, background: '#E8F5E9', color: '#2E7D32' } : s.err}>{optMsg.text}</div>}
               </div>
@@ -1141,8 +1141,8 @@ export default function GlbStudio() {
               <div style={s.section}>
                 <div style={s.sectionTitle}>Flatten Back (relief)</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <button onClick={setFront} style={{ ...s.addBtn, marginTop: 0 }}>🎯 Set front</button>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: flat.frontSet ? '#2E7D32' : '#9BB5A2' }}>{flat.frontSet ? 'Front set ✓' : 'Default view'}</span>
+                  <button onClick={setFront} style={{ ...s.addBtn, marginTop: 0 }}>Set front</button>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: flat.frontSet ? '#2E7D32' : '#9BB5A2' }}>{flat.frontSet ? 'Front set' : 'Default view'}</span>
                 </div>
                 <div style={{ fontSize: 11, color: '#9BB5A2', fontWeight: 600, marginBottom: 10 }}>Orbit to the profile you want, Set front, then flatten — the back cuts parallel to that view. Only pieces with <b>flat</b> on (Pieces list) are flattened — e.g. flatten the body, leave the horn.</div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: flat.enabled ? 12 : 0 }}>
@@ -1240,7 +1240,7 @@ export default function GlbStudio() {
                       ))}
                     </div>
                   </div>
-                  <button style={s.exportBtn(busy)} onClick={handleSaveElement} disabled={busy}>{busy ? 'Working…' : '✓ Save as Element'}</button>
+                  <button style={s.exportBtn(busy)} onClick={handleSaveElement} disabled={busy}>{busy ? 'Working…' : 'Save as Element'}</button>
                   {saveMsg && <div style={saveMsg.ok ? { ...s.err, background: '#E8F5E9', color: '#2E7D32' } : s.err}>{saveMsg.text}</div>}
                 </div>
               </div>

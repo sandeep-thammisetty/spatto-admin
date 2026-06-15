@@ -92,7 +92,6 @@ export default function OnboardBaker() {
     return (
       <div style={s.page}>
         <div style={s.card}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>🎉</div>
           <div style={s.successTitle}>Baker created!</div>
           <div style={s.successSub}>Share these login details with the primary user.</div>
 
@@ -112,7 +111,7 @@ export default function OnboardBaker() {
           </div>
 
           <button style={s.copyBtn} onClick={copyPassword}>
-            {copied ? '✓ Copied' : 'Copy password'}
+            {copied ? 'Copied' : 'Copy password'}
           </button>
 
           <button style={s.anotherBtn} onClick={() => {

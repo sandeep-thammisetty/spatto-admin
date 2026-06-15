@@ -211,7 +211,7 @@ function SubscriptionForm({ plans, periods, form, setForm, saving, error, succes
       </div>
 
       {error   && <div style={{ fontSize: 12, color: '#DC2626', fontWeight: 600 }}>{error}</div>}
-      {success && <div style={{ fontSize: 12, color: '#065F46', fontWeight: 700 }}>✓ Subscription assigned</div>}
+      {success && <div style={{ fontSize: 12, color: '#065F46', fontWeight: 700 }}>Subscription assigned</div>}
 
       <button onClick={onSave} disabled={saving} style={{
         padding: '12px', borderRadius: 10, border: 'none',
@@ -259,7 +259,7 @@ function AddSubscriptionModal({ bakers, plans, periods, onClose, onSaved }) {
 
         <div style={{ padding: '20px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 16, fontWeight: 800, color: '#2C4433' }}>Add Subscription</div>
-          <button onClick={onClose} style={{ background: '#F4F8F5', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 14, color: '#555', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+          <button onClick={onClose} style={{ background: '#F4F8F5', border: 'none', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', fontSize: 14, color: '#555', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
         </div>
 
         <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -332,7 +332,7 @@ function ManagePanel({ bakerId, onClose, onSaved }) {
         onClick={e => e.stopPropagation()}>
 
         <div style={{ padding: '20px 24px', background: '#2C4433', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: 'inherit' }}>← Back</button>
+          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: 'inherit' }}>Back</button>
           <div>
             <div style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>{data?.baker?.name ?? '…'}</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>Subscription Management</div>

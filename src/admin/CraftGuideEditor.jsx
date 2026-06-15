@@ -99,7 +99,7 @@ export default function CraftGuideEditor({ elementId, name, description, thumbna
 
   return (
     <div style={c.panel}>
-      <div style={c.head}>🔍 Baker Craft Guide · X-Ray</div>
+      <div style={c.head}>Baker Craft Guide · X-Ray</div>
       <div style={c.hint}>
         How a baker recreates this piping. Tag the atomic blocks — a pattern automatically
         shows the combined nozzles of its parts in X-Ray.

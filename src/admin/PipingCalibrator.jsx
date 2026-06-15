@@ -1187,7 +1187,7 @@ export default function PipingCalibrator() {
                 </div>
                 <button onClick={captureScreenshot} disabled={!activeGlbUrl}
                   style={{ width: '100%', padding: '8px 0', background: activeGlbUrl ? '#9B5F72' : '#d8c2cb', color: '#fff', border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: activeGlbUrl ? 'pointer' : 'default', fontFamily: "'Quicksand',sans-serif" }}>
-                  📸 Download screenshot
+                  Download screenshot
                 </button>
               </div>
             ) : (

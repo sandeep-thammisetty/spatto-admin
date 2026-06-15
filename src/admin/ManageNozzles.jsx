@@ -173,7 +173,7 @@ export default function ManageNozzles() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
           <div style={{ ...s.title, marginBottom: 0 }}>Nozzle Catalog</div>
           <button style={s.btn(bulkOpen ? 'secondary' : 'primary')} onClick={() => { setBulkOpen(o => !o); setBulkResult(null); }}>
-            {bulkOpen ? 'Close bulk add' : '⊞ Bulk add'}
+            {bulkOpen ? 'Close bulk add' : 'Bulk add'}
           </button>
         </div>
 
@@ -359,7 +359,7 @@ export default function ManageNozzles() {
                 <input type="checkbox" style={{ width: 16, height: 16, accentColor: '#E8A33D', cursor: 'pointer' }}
                   checked={form.is_common}
                   onChange={e => setForm(f => ({ ...f, is_common: e.target.checked }))} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#2C4433' }}>★ Common (go-to tip)</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#2C4433' }}>Common (go-to tip)</span>
               </label>
               <div style={{ fontSize: 11, color: '#9BB5A2', marginTop: 4, paddingLeft: 24 }}>
                 Featured first, and preferred by the GPT suggester over obscure equivalents.

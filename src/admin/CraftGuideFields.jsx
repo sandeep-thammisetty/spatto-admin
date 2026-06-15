@@ -1,6 +1,6 @@
 // Controlled, presentational craft-guide fields — nozzle recs (rank, brand,
 // number, name, confidence), buttercream consistency and a technique tip, plus
-// an optional "✨ Fill with GPT" button. State is owned by the parent so this
+// an optional "Fill with GPT" button. State is owned by the parent so this
 // works both in the id-based CraftGuideEditor (ManageElements) and pre-creation
 // in AddElement. Shared so both surfaces stay identical.
 
@@ -76,7 +76,7 @@ export default function CraftGuideFields({
             onClick={onSuggest}
             title={canSuggest ? 'Suggest nozzles from the thumbnail with GPT' : 'Add a thumbnail first'}
           >
-            {suggesting ? 'Thinking…' : '✨ Fill with GPT'}
+            {suggesting ? 'Thinking…' : 'Fill with GPT'}
           </button>
         )}
       </div>

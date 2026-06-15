@@ -560,7 +560,7 @@ export default function FreehandPenStudio() {
     <div style={{ display: 'flex', height: 'calc(100vh - 56px)', fontFamily: "'Quicksand', sans-serif", background: '#EDEAE2' }}>
       {/* Controls */}
       <div style={{ width: 360, overflowY: 'auto', padding: 18, borderRight: '1px solid #DCE5DD' }}>
-        <h2 style={{ fontSize: 18, fontWeight: 800, color: '#2C4433', margin: '0 0 4px' }}>✍️  Freehand Pen</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 800, color: '#2C4433', margin: '0 0 4px' }}>Freehand Pen</h2>
         <p style={{ fontSize: 11, color: '#9BB5A2', margin: '0 0 16px', lineHeight: 1.5 }}>
           Drag on the cake to pipe a stroke, release to stop. Drag the empty space around it to
           rotate the view. Great for stems, vines and squiggles. Prototype — the stroke→tube core
@@ -571,10 +571,10 @@ export default function FreehandPenStudio() {
           <div style={heading}>Style</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {[
-              { k: 'line',    l: '〜 Line',    h: 'Steady rope — stems, vines, writing' },
-              { k: 'shell',   l: '🐚 Shell',   h: 'Shell border — drag to lay a row' },
-              { k: 'rosette', l: '🌀 Rosette', h: 'Freehand swirl that builds up as you coil it' },
-              { k: 'stamp',   l: '🧁 Stamp',   h: 'Place a real cream GLB — tap one, drag a row' },
+              { k: 'line',    l: 'Line',    h: 'Steady rope — stems, vines, writing' },
+              { k: 'shell',   l: 'Shell',   h: 'Shell border — drag to lay a row' },
+              { k: 'rosette', l: 'Rosette', h: 'Freehand swirl that builds up as you coil it' },
+              { k: 'stamp',   l: 'Stamp',   h: 'Place a real cream GLB — tap one, drag a row' },
             ].map(s => {
               const on = style === s.k;
               return (
@@ -665,13 +665,13 @@ export default function FreehandPenStudio() {
               style={{ flex: 1, fontSize: 12, padding: '9px 0', borderRadius: 8, fontWeight: 700,
                 border: '2px solid #C5D4C8', background: '#fff', color: committed.length ? '#6B8C74' : '#C5D4C8',
                 cursor: committed.length ? 'pointer' : 'not-allowed' }}>
-              ↶ Undo
+              Undo
             </button>
             <button onClick={clear} disabled={!committed.length}
               style={{ flex: 1, fontSize: 12, padding: '9px 0', borderRadius: 8, fontWeight: 700,
                 border: '2px solid #E7C3C3', background: '#fff', color: committed.length ? '#C0392B' : '#E7C3C3',
                 cursor: committed.length ? 'pointer' : 'not-allowed' }}>
-              🗑 Clear
+              Clear
             </button>
           </div>
           <p style={{ fontSize: 11, color: '#6B8C74', margin: '10px 0 0', fontWeight: 700 }}>
@@ -699,7 +699,7 @@ export default function FreehandPenStudio() {
 
         <div style={{ position: 'absolute', top: 14, left: 14, background: '#fff', padding: '6px 12px',
           borderRadius: 10, border: '1px solid #E8EFE9', fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>
-          ✍️  Drag on the cake to pipe · drag the empty space to rotate
+          Drag on the cake to pipe · drag the empty space to rotate
         </div>
 
         <div style={{ position: 'absolute', top: 14, right: 14, display: 'flex', alignItems: 'center', gap: 8,

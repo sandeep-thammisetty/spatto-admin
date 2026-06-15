@@ -861,7 +861,7 @@ export default function ManageElements() {
           <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Flip for bottom placement</span>
           <button onClick={() => updatePc({ bottom_flip: !flip })}
             style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${flip ? '#3D5A44' : '#C5D4C8'}`, background: flip ? '#3D5A44' : '#fff', color: flip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-            {flip ? '↕ Flip: On' : '↕ Flip: Off'}
+            {flip ? 'Flip: On' : 'Flip: Off'}
           </button>
         </div>
         {/* User-adjustable toggles (+ pattern-only visibility flag for blocks) */}
@@ -904,7 +904,7 @@ export default function ManageElements() {
                   return (
                     <button key={mode} onClick={() => toggleMode(mode)}
                       style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${on ? '#3D5A44' : '#C5D4C8'}`, background: on ? '#3D5A44' : '#fff', color: on ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif", textTransform: 'capitalize' }}>
-                      {on ? `✓ ${mode}` : mode}
+                      {on ? `${mode}` : mode}
                     </button>
                   );
                 })}
@@ -1128,7 +1128,7 @@ export default function ManageElements() {
                   {selectedEl.image_url && !newAssetFile && (
                     <div style={s.currentAsset}>
                       {isGlb
-                        ? <span style={{ fontSize: 24 }}>📦</span>
+                        ? <span style={{ fontSize: 11, fontWeight: 800, color: '#6B8C74', letterSpacing: 0.5 }}>3D</span>
                         : <img src={selectedEl.image_url} alt="" style={{ ...s.currentThumb, objectFit: 'cover' }} />
                       }
                       <div style={{ minWidth: 0 }}>
@@ -1220,7 +1220,7 @@ export default function ManageElements() {
                         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
                           <button onClick={confirmFrontView}
                             style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${frontConfirmed ? '#3D5A44' : '#e05252'}`, background: frontConfirmed ? '#3D5A44' : '#fff', color: frontConfirmed ? '#fff' : '#e05252', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                            {frontConfirmed ? '✓ Front set' : '✱ Set front view (required)'}
+                            {frontConfirmed ? 'Front set' : 'Set front view (required)'}
                           </button>
                         </div>
                         {/* Calibrator paste + Merge live side-by-side with the placement_config
@@ -1302,7 +1302,7 @@ export default function ManageElements() {
                           <button onClick={capturePatternThumbnail} disabled={!patternThumb || regenerating}
                             title={patternThumb ? 'Capture the preview above and save it as this element’s thumbnail' : 'Referenced block could not be resolved'}
                             style={{ fontSize: 11, padding: '6px 12px', borderRadius: 6, border: '2px solid #3D5A44', background: (!patternThumb || regenerating) ? '#C5D4C8' : '#3D5A44', color: '#fff', cursor: (!patternThumb || regenerating) ? 'not-allowed' : 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                            {regenerating ? 'Capturing…' : '📸 Capture thumbnail'}
+                            {regenerating ? 'Capturing…' : 'Capture thumbnail'}
                           </button>
                           {!patternThumb && parts.length > 0 && (
                             <div style={{ fontSize: 10, color: '#c0392b', marginTop: 4 }}>Referenced block not found — can’t capture.</div>
@@ -1566,8 +1566,8 @@ export default function ManageElements() {
                 {/* ── placement_config JSON editor (+ calibrator paste side-by-side for piping) ── */}
                 <div style={s.field}>
                   <label style={s.label}>placement_config (JSON)
-                    {(() => { try { JSON.parse(placementConfig); return <span style={{ marginLeft: 8, fontSize: 11, color: '#3D5A44', fontWeight: 600 }}>✓ valid</span>; }
-                      catch (e) { return <span style={{ marginLeft: 8, fontSize: 11, color: '#c0392b', fontWeight: 700 }}>✗ invalid JSON — won’t save</span>; } })()}
+                    {(() => { try { JSON.parse(placementConfig); return <span style={{ marginLeft: 8, fontSize: 11, color: '#3D5A44', fontWeight: 600 }}>valid</span>; }
+                      catch (e) { return <span style={{ marginLeft: 8, fontSize: 11, color: '#c0392b', fontWeight: 700 }}>invalid JSON — won’t save</span>; } })()}
                   </label>
 
                   <>

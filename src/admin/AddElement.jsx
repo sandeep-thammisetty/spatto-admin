@@ -462,7 +462,7 @@ export default function AddElement() {
     // The front view exists to (a) orient the model and (b) auto-capture a thumbnail from it.
     // If a thumbnail has already been provided (uploaded or captured), it's no longer required.
     if (assetType === '3D' && !isPatternType && !frontConfirmed && !thumbnailBlob) {
-      setMsg({ ok: false, text: 'Set the front view before saving — drag the model and click "✓ This is the front", or upload a thumbnail.' });
+      setMsg({ ok: false, text: 'Set the front view before saving — drag the model and click "This is the front", or upload a thumbnail.' });
       return;
     }
     if (applicableZones.length === 0) {
@@ -490,7 +490,7 @@ export default function AddElement() {
       }))
       .filter(r => r.brand && r.number);
     if (isPipingType && cleanCraftRecs.length === 0) {
-      setMsg({ ok: false, text: 'Add at least one piping nozzle (or use ✨ Fill with GPT) — required for cream piping elements.' });
+      setMsg({ ok: false, text: 'Add at least one piping nozzle (or use Fill with GPT) — required for cream piping elements.' });
       return;
     }
 
@@ -816,7 +816,7 @@ export default function AddElement() {
                     // Front view is required only when no thumbnail exists yet (it captures one);
                     // with a thumbnail already provided it's optional (just sets orientation).
                     const accent = frontConfirmed ? '#3D5A44' : (thumbnailBlob ? '#6B8C74' : '#e05252');
-                    const text   = frontConfirmed ? '✓ Front set' : (thumbnailBlob ? 'Set front view (optional)' : '✱ Set front view (required)');
+                    const text   = frontConfirmed ? 'Front set' : (thumbnailBlob ? 'Set front view (optional)' : 'Set front view (required)');
                     return (
                       <button onClick={confirmFrontView}
                         style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${accent}`, background: frontConfirmed ? '#3D5A44' : '#fff', color: frontConfirmed ? '#fff' : accent, cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
@@ -831,7 +831,7 @@ export default function AddElement() {
                       <span style={{ fontSize: 11, color: '#3D5A44', fontWeight: 600, fontFamily: "'Quicksand',sans-serif" }}>Flip for bottom placement</span>
                       <button onClick={() => setPipingBottomFlip(f => !f)}
                         style={{ fontSize: 11, padding: '5px 12px', borderRadius: 6, border: `2px solid ${pipingBottomFlip ? '#3D5A44' : '#C5D4C8'}`, background: pipingBottomFlip ? '#3D5A44' : '#fff', color: pipingBottomFlip ? '#fff' : '#6B8C74', cursor: 'pointer', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                        {pipingBottomFlip ? '↕ Flip: On' : '↕ Flip: Off'}
+                        {pipingBottomFlip ? 'Flip: On' : 'Flip: Off'}
                       </button>
                     </div>
                   </div>
@@ -881,13 +881,13 @@ export default function AddElement() {
                 onClick={handleSuggest}
                 disabled={!thumbnailBlob || suggesting}
                 style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: '1px solid #c9a8b5', background: thumbnailBlob ? '#fff0f5' : '#f5f5f5', color: thumbnailBlob ? '#9b5268' : '#bbb', cursor: thumbnailBlob ? 'pointer' : 'not-allowed', fontWeight: 700, fontFamily: "'Quicksand',sans-serif" }}>
-                {suggesting ? 'Thinking…' : '✦ Suggest'}
+                {suggesting ? 'Thinking…' : 'Suggest'}
               </button>
             </div>
             <input style={s.input} value={name} onChange={e => { setName(e.target.value); setSuggestions(null); }} placeholder="e.g. Rainbow Topper" />
             {suggestError && (
               <div style={{ fontSize: 11, color: '#c0392b', fontWeight: 600, marginTop: 6, padding: '6px 10px', background: '#fdf0ee', borderRadius: 6 }}>
-                ✕ {suggestError}
+                {suggestError}
               </div>
             )}
             {suggestions?.names && (
@@ -1041,10 +1041,10 @@ export default function AddElement() {
           {isPipingType && (
             <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1.5px solid #C9D9E0', background: '#F4F8FB' }}>
               <div style={{ fontSize: 11, fontWeight: 800, color: '#3A5563', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
-                🔍 Baker Craft Guide · X-Ray <span style={{ color: '#c0392b' }}>*</span>
+                Baker Craft Guide · X-Ray <span style={{ color: '#c0392b' }}>*</span>
               </div>
               <div style={{ fontSize: 11, color: '#7E97A2', marginBottom: 14, lineHeight: 1.5 }}>
-                Required for cream piping — at least one nozzle. Add a thumbnail, then hit <b>✨ Fill with GPT</b> or enter them by hand.
+                Required for cream piping — at least one nozzle. Add a thumbnail, then hit <b>Fill with GPT</b> or enter them by hand.
               </div>
               <CraftGuideFields
                 recs={craftRecs} setRecs={setCraftRecs}

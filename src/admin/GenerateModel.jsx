@@ -468,7 +468,7 @@ export default function GenerateModel() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <div style={{ ...s.sectionTitle, marginBottom: 0 }}>Model Script</div>
                 <button onClick={copyPrompt} style={s.copyPromptBtn} title="Copy the AI system prompt to your clipboard, paste it into Claude/GPT, then paste the script it returns here">
-                  {promptCopied ? '✓ Copied prompt' : '📋 Copy AI prompt'}
+                  {promptCopied ? 'Copied prompt' : 'Copy AI prompt'}
                 </button>
               </div>
               <textarea
@@ -482,7 +482,7 @@ export default function GenerateModel() {
               {scriptError && <div style={s.err}>{scriptError}</div>}
               {warnings.length > 0 && (
                 <div style={s.warn}>
-                  {warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+                  {warnings.map((w, i) => <div key={i}>{w}</div>)}
                 </div>
               )}
             </div>

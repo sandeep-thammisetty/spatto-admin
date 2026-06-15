@@ -266,7 +266,7 @@ export default function CreamPenStudio() {
     <div style={{ display: 'flex', height: 'calc(100vh - 56px)', fontFamily: "'Quicksand', sans-serif", background: '#EDEAE2' }}>
       {/* Controls */}
       <div style={{ width: 360, overflowY: 'auto', padding: 18, borderRight: '1px solid #DCE5DD' }}>
-        <h2 style={{ fontSize: 18, fontWeight: 800, color: '#2C4433', margin: '0 0 4px' }}>🖊️ Cream Pen</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 800, color: '#2C4433', margin: '0 0 4px' }}>Cream Pen</h2>
         <p style={{ fontSize: 11, color: '#9BB5A2', margin: '0 0 16px', lineHeight: 1.5 }}>
           Write a name on the cake top as piped cream. Prototype — once it reads right we port the
           renderer into <b>spattoo-core</b>.
