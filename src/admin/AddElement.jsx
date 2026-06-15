@@ -522,7 +522,13 @@ export default function AddElement() {
 
       let builtPlacementConfig = {};
       if (assetType === '3D_GEOM') {
-        builtPlacementConfig = { top_surface: 'faux_balls', side: 'faux_balls', roughness: glbRoughness, metalness: glbMetalness };
+        // A file-less procedural element (image_url null). The designer's ONLY file-less render
+        // mode is `faux_balls` (a sculpted gold-ball cluster), so that's the mode for each zone the
+        // admin actually selected — written per applicableZone so placement_config stays in sync
+        // with allowed_zones (no blanket top+side hardcode that ignored the chosen zones). For
+        // scattered shapes that aren't a clump, create a "3D Model (GLB)" element with scatter.
+        builtPlacementConfig = { roughness: glbRoughness, metalness: glbMetalness };
+        for (const zone of applicableZones) builtPlacementConfig[zone] = 'faux_balls';
       } else {
         // Write the chosen mode for EVERY applicable zone explicitly (default 'hug') — no more
         // "absent means hug"; the config states each zone's mode so the designer never guesses.
@@ -666,6 +672,12 @@ export default function AddElement() {
           {/* 3D Geometry preview + controls */}
           {assetType === '3D_GEOM' && (
             <>
+              <div style={{ ...s.field, background: '#F2F7F3', border: '1px solid #C5D4C8', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 12, color: '#2C4433', fontWeight: 700, marginBottom: 3 }}>Places as a faux-ball cluster</div>
+                <div style={{ fontSize: 11, color: '#6B8C74', lineHeight: 1.4 }}>
+                  3D Geometry is file-less, so the designer renders it as a sculpted gold-ball cluster (mode <code>faux_balls</code>) on each selected zone — not free-scattered shapes. For scattered sprinkles/pearls, upload a small ball as a <strong>3D Model (GLB)</strong> and tick <strong>Can scatter</strong> instead.
+                </div>
+              </div>
               <div style={s.field}>
                 <label style={s.label}>Default Color</label>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>

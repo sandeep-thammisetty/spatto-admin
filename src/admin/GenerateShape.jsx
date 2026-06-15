@@ -337,6 +337,7 @@ export default function GenerateShape() {
   const [name, setName]                     = useState('Faux Ball');
   const [zones, setZones]                   = useState(['top_surface', 'side', 'middle_tier']);
   const [placementConfig, setPlacementConfig] = useState({});
+  const [canScatter, setCanScatter]         = useState(false);
   const [capabilities, setCapabilities]     = useState({ resize: true, duplicate: true, color: false, delete: true, move: false, tilt: false });
   const [saving, setSaving]                 = useState(false);
   const [msg, setMsg]                       = useState(null);
@@ -414,6 +415,10 @@ export default function GenerateShape() {
     setPlacementConfig(prev => ({ ...prev, [z]: mode }));
   }
 
+  // Density-scatter: inherent for the scattered_decor type, otherwise opt-in (matches AddElement).
+  const isScatterType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'scattered_decor';
+  const effectiveCanScatter = isScatterType || canScatter;
+
   async function handleSave() {
     if (!name.trim())    return setMsg({ ok: false, text: 'Enter a name' });
     if (!elementTypeId)  return setMsg({ ok: false, text: 'Select an element type' });
@@ -421,6 +426,12 @@ export default function GenerateShape() {
 
     setSaving(true);
     setMsg(null);
+
+    // Density-scatter is config-driven in the designer (placement_config.scatter), never inferred
+    // from element type — so persist it explicitly. Mutually exclusive with single_per_slot.
+    const finalPlacementConfig = effectiveCanScatter
+      ? { ...placementConfig, scatter: true }
+      : placementConfig;
 
     try {
       if (assetType === '2D') {
@@ -433,7 +444,7 @@ export default function GenerateShape() {
         try { thumbBlob = await removeBg(rawBlob); } catch (e) { console.warn('remove.bg failed:', e.message); }
         const { url: tu, key: tk } = await getSignedUploadUrl('elements/thumbnails', `${crypto.randomUUID()}.png`, 'image/png');
         await uploadToR2(tu, thumbBlob);
-        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: placementConfig, allowed_actions: capabilities, default_color: null, sort_order: 0 });
+        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: finalPlacementConfig, allowed_actions: capabilities, default_color: null, sort_order: 0 });
 
       } else {
         // Capture thumbnail from WebGL canvas
@@ -454,7 +465,7 @@ export default function GenerateShape() {
         const { url: tu, key: tk } = await getSignedUploadUrl('elements/thumbnails', `${crypto.randomUUID()}.png`, 'image/png');
         await uploadToR2(tu, thumbBlob);
 
-        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: placementConfig, allowed_actions: capabilities, default_color: color3d, sort_order: 0 });
+        await createGlobalElement({ name: name.trim(), element_type_id: elementTypeId, parent_id: null, image_url: fk, thumbnail_url: tk, allowed_zones: zones, placement_config: finalPlacementConfig, allowed_actions: capabilities, default_color: color3d, sort_order: 0 });
       }
 
       setMsg({ ok: true, text: 'Element saved!' });
@@ -673,6 +684,25 @@ export default function GenerateShape() {
                     );
                   })}
                 </div>
+
+                {/* Density scatter — packed instances controlled by a density slider in the
+                    designer (sprinkles, pearls). Config-driven (placement_config.scatter); inherent
+                    for the scattered_decor type. Pair with a small shape (e.g. Sphere) + Hug. */}
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: effectiveCanScatter && isScatterType ? 'default' : 'pointer', marginTop: 12, background: '#F4F8F5', borderRadius: 8, padding: '10px 12px' }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: 18, height: 18, accentColor: '#3D5A44', cursor: 'pointer', marginTop: 1, flexShrink: 0 }}
+                    checked={effectiveCanScatter}
+                    disabled={isScatterType}
+                    onChange={e => setCanScatter(e.target.checked)}
+                  />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#2C4433' }}>Can scatter (density){isScatterType ? ' — inherent to this type' : ''}</div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                      Drops many packed instances managed by a density slider (sprinkles, pearls). For gold sprinkles: pick Sphere, set zones to Hug, and turn this on.
+                    </div>
+                  </div>
+                </label>
               </div>
             )}
           </div>
