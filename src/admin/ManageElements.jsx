@@ -455,6 +455,8 @@ export default function ManageElements() {
   const [placementZoneConfig, setPlacementZoneConfig] = useState({});
   const [placementScale,      setPlacementScale]      = useState('');
   const [singlePerSlot,      setSinglePerSlot]      = useState(false);
+  const [canScatter,         setCanScatter]         = useState(false);
+  const [sideProud,          setSideProud]          = useState(false);
   const [hugFill,            setHugFill]            = useState('');
   const [patternOnly,        setPatternOnly]        = useState(false);
   const [description,      setDescription]      = useState('');
@@ -521,6 +523,8 @@ export default function ManageElements() {
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setSinglePerSlot(pc.single_per_slot === true);
+    setCanScatter(pc.scatter === true);
+    setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
     setPatternOnly(pc.pattern_only === true);
     setGlbEnvPreset('none');
@@ -587,6 +591,8 @@ export default function ManageElements() {
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setSinglePerSlot(pc.single_per_slot === true);
+    setCanScatter(pc.scatter === true);
+    setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
     setPatternOnly(pc.pattern_only === true);
     // Keep glbRotation in lockstep with the JSON. handleSave rewrites rotation from glbRotation,
@@ -644,6 +650,14 @@ export default function ManageElements() {
       // never inferred from element type — see spattoo-core INVARIANTS.md rule #4.
       if (singlePerSlot) parsedConfig.single_per_slot = true;
       else delete parsedConfig.single_per_slot;
+      // Scatter STYLE: many packed instances driven by a density control (sprinkles), vs. discrete
+      // decor placed/duplicated by hand. Config-driven; the designer reads placement_config.scatter,
+      // never the element type. Mutually exclusive with single_per_slot.
+      if (canScatter) { parsedConfig.scatter = true; delete parsedConfig.single_per_slot; }
+      else delete parsedConfig.scatter;
+      // Side seating: default flush (true hug); proud = stands off the wall.
+      if (sideProud) parsedConfig.side_proud = true;
+      else delete parsedConfig.side_proud;
       // Hero side-hug size = fraction of tier wall height (designer derives at render; r = stand size).
       if (hugFill !== '') parsedConfig.hug_fill = parseFloat(hugFill);
       else delete parsedConfig.hug_fill;
@@ -1492,6 +1506,35 @@ export default function ManageElements() {
                           <div style={s.checkLabel}>Single per slot (hero element)</div>
                           <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
                             One instance per tier×surface via the checkbox chooser (toppers, top&side decor), instead of free scatter.
+                          </div>
+                        </div>
+                      </label>
+                      <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}>
+                        <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
+                          checked={canScatter}
+                          onChange={e => {
+                            const on = e.target.checked;
+                            setCanScatter(on);
+                            // Scatter and single-per-slot are mutually exclusive.
+                            if (on) { setSinglePerSlot(false); patchPc({ scatter: true, single_per_slot: null }); }
+                            else patchPc({ scatter: null });
+                          }} />
+                        <div>
+                          <div style={s.checkLabel}>Can scatter (density)</div>
+                          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                            Many packed instances controlled by a density slider in the designer (sprinkles, pearls). For discrete decor, leave off and let users duplicate by hand.
+                          </div>
+                        </div>
+                      </label>
+                      <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}
+                        title="Off = lies flat against the side (hugs the wall). On = raised off the wall — for deep 3D pieces that look half-buried when flattened.">
+                        <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
+                          checked={sideProud}
+                          onChange={e => { setSideProud(e.target.checked); patchPc({ side_proud: e.target.checked ? true : null }); }} />
+                        <div>
+                          <div style={s.checkLabel}>Stands out from the side wall</div>
+                          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                            Off = lies flat against the side (hugs the wall). On = raised off the wall — for deep 3D pieces (e.g. a topper) that look half-buried when flattened.
                           </div>
                         </div>
                       </label>

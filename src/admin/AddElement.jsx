@@ -274,6 +274,8 @@ export default function AddElement() {
   const [placementConfig, setPlacementConfig] = useState({});
   const [placementScale, setPlacementScale]   = useState('');
   const [singlePerSlot,  setSinglePerSlot]    = useState(false);
+  const [canScatter,     setCanScatter]       = useState(false);
+  const [sideProud,      setSideProud]        = useState(false);
   const [hugFill,        setHugFill]          = useState('');
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, gradient: false, delete: true, move: false, tilt: false });
   const [glbRotation, setGlbRotation]         = useState([0, 0, 0]);
@@ -530,7 +532,10 @@ export default function AddElement() {
         if (placementScale !== '') builtPlacementConfig.r = parseFloat(placementScale);
         // Placement STYLE: hero (one per tier×surface) vs. free scatter. Config-driven, never
         // inferred from element type — see spattoo-core INVARIANTS.md rule #4.
-        if (singlePerSlot) builtPlacementConfig.single_per_slot = true;
+        if (effectiveCanScatter) builtPlacementConfig.scatter = true;        // sprinkles: density-driven, packed
+        else if (singlePerSlot) builtPlacementConfig.single_per_slot = true;  // mutually exclusive with scatter
+        // Side seating: default flush (true hug); proud = stands off the wall (deep toppers).
+        if (sideProud) builtPlacementConfig.side_proud = true;
         // Hero side-hug size = this fraction of the tier wall height (designer derives it at
         // render time; r is the stand size only). Blank → designer default (0.7).
         if (hugFill !== '') builtPlacementConfig.hug_fill = parseFloat(hugFill);
@@ -602,6 +607,8 @@ export default function AddElement() {
       setPlacementConfig({});
       setPlacementScale('');
       setSinglePerSlot(false);
+      setCanScatter(false);
+      setSideProud(false);
       setHugFill('');
       setCapabilities({ resize: true, duplicate: true, color: false, delete: true, move: false, tilt: false });
       setPipingBottomFlip(true);
@@ -617,6 +624,11 @@ export default function AddElement() {
   }
 
   const isPipingType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'cream_piping';
+  // The "scattered decor" type IS inherently scatter — force the flag on (and lock it) when chosen.
+  // This is an admin-side type→default coupling only; the designer still reads placement_config.scatter,
+  // never the element type. Other types can opt in via the editable checkbox.
+  const isScatterType = elementTypes.find(t => t.id === elementTypeId)?.slug === 'scattered_decor';
+  const effectiveCanScatter = isScatterType || canScatter;
   // Pattern types have no asset of their own — they reference part elements via
   // placement_config.parts (decor_pattern: decor stickers; piping_pattern: cream blocks). So no
   // file upload is required; image_url stays null (same as 3D-geometry elements already do).
@@ -931,7 +943,26 @@ export default function AddElement() {
                   <input type="number" min="0.1" step="0.1" style={{ ...s.input, flex: 1 }} value={placementScale} placeholder="e.g. 2.5 — leave blank for auto" onChange={e => setPlacementScale(e.target.value)} />
                 </div>
                 <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}>
-                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={singlePerSlot} onChange={e => setSinglePerSlot(e.target.checked)} />
+                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={effectiveCanScatter} disabled={isScatterType} onChange={e => setCanScatter(e.target.checked)} />
+                  <div>
+                    <div style={s.checkLabel}>Can scatter (density){isScatterType ? ' — inherent to this type' : ''}</div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                      Many packed instances controlled by a density slider in the designer (sprinkles, pearls). For discrete decor, leave off and let users duplicate by hand. Mutually exclusive with single-per-slot.
+                    </div>
+                  </div>
+                </label>
+                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}
+                  title="Off = lies flat against the side (hugs the wall). On = raised off the wall — for deep 3D pieces that look half-buried when flattened.">
+                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={sideProud} onChange={e => setSideProud(e.target.checked)} />
+                  <div>
+                    <div style={s.checkLabel}>Stands out from the side wall</div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                      Off = lies flat against the side (hugs the wall). On = raised off the wall — for deep 3D pieces (e.g. a topper) that look half-buried when flattened.
+                    </div>
+                  </div>
+                </label>
+                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4, opacity: effectiveCanScatter ? 0.45 : 1 }}>
+                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={singlePerSlot} disabled={effectiveCanScatter} onChange={e => setSinglePerSlot(e.target.checked)} />
                   <div>
                     <div style={s.checkLabel}>Single per slot (hero element)</div>
                     <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
