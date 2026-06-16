@@ -91,7 +91,9 @@ export function bakeColors(geo, material) {
 // Merge every mesh of the loaded scene (transforms baked into positions) into one
 // welded, colour-attributed, normalised geometry, optionally simplified to a
 // triangle budget. Returns an indexed welded THREE.BufferGeometry.
-export async function buildWorkingGeo(scene, targetTris) {
+// Stage 1 (run ONCE on import): bake colours, merge, normalise, weld → the FULL-RES welded geo.
+// Kept as the source the Detail slider simplifies from, so re-balancing never re-bakes the scene.
+export async function bakeAndWeldGeo(scene) {
   const geos = [];
   scene.updateMatrixWorld(true);
   scene.traverse(o => {
@@ -115,10 +117,16 @@ export async function buildWorkingGeo(scene, targetTris) {
   merged.scale(scale, scale, scale);
 
   // weld so we have shared-vertex topology for adjacency + a clean index to simplify.
-  let welded = mergeVertices(merged);
+  const welded = mergeVertices(merged);
+  welded.computeVertexNormals();
+  return welded;
+}
 
-  // simplify (colour-weighted, lock the border) so per-face editing stays snappy
-  // and the saved topper is light for mobile. Skip if already under budget.
+// Stage 2 (run per Detail-slider change): simplify a CLONE of the full-res welded geo to targetTris.
+// Colour-weighted, border-locked, so per-face editing stays snappy and the saved topper is light.
+// Non-mutating — the cached full-res geo is reused for every re-balance.
+export async function simplifyWeldedGeo(fullWelded, targetTris) {
+  let welded = fullWelded.clone();
   const curTris = welded.index.count / 3;
   if (targetTris && curTris > targetTris) {
     await MeshoptSimplifier.ready;
@@ -137,6 +145,12 @@ export async function buildWorkingGeo(scene, targetTris) {
   }
   welded.computeVertexNormals();
   return welded;
+}
+
+// Convenience: bake+weld then simplify in one call (kept for headless tests / callers).
+export async function buildWorkingGeo(scene, targetTris) {
+  const full = await bakeAndWeldGeo(scene);
+  return simplifyWeldedGeo(full, targetTris);
 }
 
 // From an indexed welded geometry, derive everything per-FACE we need to segment:

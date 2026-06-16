@@ -22,6 +22,7 @@ const CAKE_ZONES = [
 const PLACEMENT_MODES = [
   { value: 'hug',              label: 'hug (default)' },   // explicit — saved as "hug", not omitted
   { value: 'stand',            label: 'stand' },
+  { value: 'perch',            label: 'perch (sit on edge)' },  // figure seated on the rim, legs over
   { value: 'faux_ball_single', label: 'faux ball single' },
   { value: 'faux_balls',       label: 'faux balls' },
 ];

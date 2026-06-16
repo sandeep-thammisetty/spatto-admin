@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import { supabase } from './lib/supabase.js';
 import Login from './auth/Login.jsx';
@@ -25,6 +25,7 @@ const ManageNozzles         = lazy(() => import('./admin/ManageNozzles.jsx'));
 const BakerSubscriptions    = lazy(() => import('./admin/BakerSubscriptions.jsx'));
 const PatternBuilder        = lazy(() => import('./admin/PatternBuilder.jsx'));
 const PipingCalibrator      = lazy(() => import('./admin/PipingCalibrator.jsx'));
+const PerchCalibrator       = lazy(() => import('./admin/PerchCalibrator.jsx'));
 const CreamPenStudio        = lazy(() => import('./admin/CreamPenStudio.jsx'));
 const FreehandPenStudio     = lazy(() => import('./admin/FreehandPenStudio.jsx'));
 const ROUTES = {
@@ -46,6 +47,7 @@ const ROUTES = {
   '/plans':               ManagePlans,
   '/pattern-builder':     PatternBuilder,
   '/elements/piping-calibrator': PipingCalibrator,
+  '/elements/perch-calibrator':  PerchCalibrator,
   '/elements/cream-pen':         CreamPenStudio,
   '/elements/freehand-pen':      FreehandPenStudio,
 };
@@ -55,6 +57,102 @@ const FALLBACK = (
     Loading…
   </div>
 );
+
+// Grouped navigation — rendered as hover/click flyouts in the header.
+const NAV_GROUPS = [
+  { title: 'Templates', items: [
+    { href: '/templates',        label: 'Manage Templates' },
+    { href: '/templates/design', label: 'Design Template' },
+  ] },
+  { title: 'Elements', items: [
+    { href: '/elements/add',    label: 'Add Element' },
+    { href: '/elements/manage', label: 'Manage Elements' },
+    { href: '/elements/types',  label: 'Element Types' },
+  ] },
+  { title: 'Editors', items: [
+    { href: '/elements/generate',       label: 'Generate Shape' },
+    { href: '/elements/generate-model', label: 'Generate 3D Model' },
+    { href: '/glb-studio',              label: 'GLB Studio' },
+    { href: '/glb-recompose',           label: 'GLB Recompose' },
+    { href: '/elements/piping-calibrator', label: 'Piping Calibrator' },
+    { href: '/elements/perch-calibrator',  label: 'Perch Calibrator' },
+    { href: '/elements/cream-pen',      label: 'Cream Pen' },
+    { href: '/elements/freehand-pen',   label: 'Freehand Pen' },
+    { href: '/pattern-builder',         label: 'Pattern Builder' },
+  ] },
+  { title: 'Baker', items: [
+    { href: '/bakers/onboard',       label: 'Onboard Baker' },
+    { href: '/bakers/subscriptions', label: 'Baker Subscriptions' },
+    { href: '/plans',                label: 'Subscription Plans' },
+  ] },
+  { title: 'Others', items: [
+    { href: '/elements/nozzles', label: 'Nozzle Catalog' },
+    { href: '/flavours',         label: 'Cake Flavours' },
+  ] },
+];
+
+function NavMenu() {
+  const [open, setOpen] = useState(null);
+  const path = window.location.pathname;
+  const navRef = useRef(null);
+  // Click-driven: a flyout stays open until you pick a child, click another parent, or click
+  // outside. (Hover-close made children vanish as the pointer moved toward them.)
+  useEffect(() => {
+    if (!open) return;
+    const onDocDown = e => { if (navRef.current && !navRef.current.contains(e.target)) setOpen(null); };
+    const onEsc = e => { if (e.key === 'Escape') setOpen(null); };
+    document.addEventListener('mousedown', onDocDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDocDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+  return (
+    <nav ref={navRef} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+      {NAV_GROUPS.map(g => {
+        const active = g.items.some(it => it.href === path);
+        const isOpen = open === g.title;
+        return (
+          <div key={g.title} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setOpen(o => (o === g.title ? null : g.title))}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                background: isOpen ? '#F4F8F5' : 'transparent',
+                border: '1.5px solid', borderColor: isOpen ? '#C5D4C8' : 'transparent',
+                borderRadius: 8, padding: '6px 12px', cursor: 'pointer',
+                fontFamily: "'Quicksand', sans-serif", fontSize: 13,
+                fontWeight: 700, color: active ? '#2C4433' : '#5C7565',
+              }}>
+              {g.title}
+              <span style={{ fontSize: 9, color: '#9BB5A2' }}>▾</span>
+            </button>
+            {isOpen && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0,
+                background: '#fff', border: '1.5px solid #C5D4C8', borderRadius: 12,
+                boxShadow: '0 8px 24px rgba(44,68,51,0.14)', minWidth: 210,
+                padding: 6, zIndex: 30, marginTop: 4,
+              }}>
+                {g.items.map(it => (
+                  <a key={it.href} href={it.href}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#F4F8F5'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = it.href === path ? '#EEF4EF' : 'transparent'; }}
+                    style={{
+                      display: 'block', padding: '9px 12px', borderRadius: 8,
+                      background: it.href === path ? '#EEF4EF' : 'transparent',
+                      color: '#2C4433', textDecoration: 'none', fontSize: 13,
+                      fontWeight: 700, whiteSpace: 'nowrap',
+                    }}>
+                    {it.label}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
 
 function AppHeader({ session }) {
   const isHome = window.location.pathname === '/';
@@ -88,10 +186,14 @@ function AppHeader({ session }) {
           ←
         </a>
       )}
-      <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none', flex: 1 }}>
+      <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
         <img src={logo} alt="Spattoo" style={{ height: 28 }} />
         <span style={{ fontSize: 10, fontWeight: 700, color: '#9BB5A2', letterSpacing: 1.5, textTransform: 'uppercase' }}>Admin</span>
       </a>
+
+      {session && <NavMenu />}
+
+      <div style={{ flex: 1 }} />
 
       {session && (
         <div style={{ position: 'relative' }}>
@@ -195,34 +297,8 @@ function Router({ session }) {
     <div style={{ minHeight: '100vh', background: '#EDEAE2', fontFamily: 'Quicksand, sans-serif' }}>
       <AppHeader session={session} />
       <div style={{ padding: 40 }}>
-        <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12, padding: 0, maxWidth: 320 }}>
-          {[
-            { href: '/templates',         label: 'Manage Templates' },
-            { href: '/templates/design',  label: 'Design Template' },
-            { href: '/elements/add',      label: 'Add Element' },
-            { href: '/elements/manage',   label: 'Manage Elements' },
-            { href: '/elements/generate', label: 'Generate Shape' },
-            { href: '/elements/generate-model', label: 'Generate 3D Model' },
-            { href: '/glb-studio', label: 'GLB Studio' },
-            { href: '/glb-recompose', label: 'GLB Recompose' },
-            { href: '/elements/types',    label: 'Element Types' },
-            { href: '/elements/nozzles',  label: 'Nozzle Catalog' },
-            { href: '/bakers/onboard',        label: 'Onboard Baker' },
-            { href: '/bakers/subscriptions',  label: 'Baker Subscriptions' },
-            { href: '/plans',                 label: 'Subscription Plans' },
-            { href: '/flavours',              label: 'Cake Flavours' },
-            { href: '/pattern-builder',       label: 'Pattern Builder' },
-            { href: '/elements/piping-calibrator', label: 'Calibrator' },
-            { href: '/elements/cream-pen',         label: 'Cream Pen' },
-            { href: '/elements/freehand-pen',      label: 'Freehand Pen' },
-          ].map(({ href, label }) => (
-            <li key={href}>
-              <a href={href} style={{ display: 'block', padding: '14px 20px', background: '#fff', borderRadius: 12, border: '1.5px solid #C5D4C8', color: '#2C4433', fontWeight: 700, textDecoration: 'none', fontSize: 14 }}>
-                {label}
-              </a>
-            </li>
-          ))}
-        </ul>
+        <h1 style={{ fontSize: 22, fontWeight: 800, color: '#2C4433', margin: '0 0 8px' }}>Spattoo Admin</h1>
+        <p style={{ fontSize: 14, color: '#5C7565', margin: 0 }}>Use the menu above to manage templates, elements, editors, bakers and more.</p>
       </div>
     </div>
   );

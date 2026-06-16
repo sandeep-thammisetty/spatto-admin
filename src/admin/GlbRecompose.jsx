@@ -7,13 +7,13 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { fetchElementTypes, getSignedUploadUrl, uploadToR2, createGlobalElement, removeBg } from '../lib/api.js';
 import { ZONE_LIST as ZONES } from '../lib/constants.js';
-import { loader, buildWorkingGeo, deriveFaceData, kmeans, clusterConnected, floodFillFaces, brushFaces, boundaryEdges, buildTexturedScene } from './glbRecomposeCore.js';
+import { loader, bakeAndWeldGeo, simplifyWeldedGeo, deriveFaceData, kmeans, clusterConnected, floodFillFaces, brushFaces, boundaryEdges, buildTexturedScene } from './glbRecomposeCore.js';
 
 // GLB Recompose — take a SINGLE fused mesh (e.g. a Meshy image-to-3D export:
 // 1 mesh, 1 material, colour baked into a texture atlas) and carve it into
 // separate recolourable PARTS. Per-face part assignment is driven by an auto
 // colour-cluster pre-fill, click flood-fill (stops at creases / colour changes)
-// and a brush. Export = one merged GLB whose meshes carry userData.part + a
+// and a brush. Export = one merged GLB whose meshes carry userData.segment + a
 // root part-map — the SAME convention GLB Studio uses, so it flows straight into
 // the element library. This is the inverse of GLB Studio (which assembles
 // already-separate pieces); the two are kept fully separate on purpose.
@@ -74,21 +74,22 @@ function SelectionOutline({ positions }) {
   );
 }
 
-function Scene({ geometry, originalObject, view, outline, toolRef, onFill, onBrushStart, onBrushMove, onBrushEnd, tool, controlsRef, ambientInt, keyInt, fillInt }) {
+function Scene({ geometry, originalObject, showGeo, showOriginal, outline, toolRef, onFill, onBrushStart, onBrushMove, onBrushEnd, tool, controlsRef, ambientInt, keyInt, fillInt }) {
   return (
     <>
       <ambientLight intensity={ambientInt} />
       <directionalLight position={[3, 5, 4]} intensity={keyInt} />
       <directionalLight position={[-4, 2, -3]} intensity={fillInt} />
       <Environment preset="studio" />
-      {/* Original view = the untouched textured GLB (full mesh + texture map, the
-          faithful reference). Parts view = the editable vertex-colour segmentation. */}
-      {view === 'original' && originalObject && <primitive object={originalObject} />}
-      {view === 'parts' && geometry && (
+      {/* Original view = the untouched textured GLB (full mesh + texture map, the faithful
+          reference). The editable vertex-colour geo (EditMesh) is shown for the Parts view AND while
+          isolating, since solo dimming needs per-face colour control the texture map can't give. */}
+      {showOriginal && originalObject && <primitive object={originalObject} />}
+      {showGeo && geometry && (
         <EditMesh geometry={geometry} toolRef={toolRef}
           onFill={onFill} onBrushStart={onBrushStart} onBrushMove={onBrushMove} onBrushEnd={onBrushEnd} />
       )}
-      {view === 'parts' && outline && <SelectionOutline positions={outline} />}
+      {showGeo && outline && <SelectionOutline positions={outline} />}
       <OrbitControls ref={controlsRef} enabled={tool === 'orbit'} makeDefault enablePan />
     </>
   );
@@ -102,12 +103,20 @@ export default function GlbRecompose() {
   const [counts, setCounts] = useState({});       // partId -> face count
   const [tool, setTool] = useState('orbit');      // 'orbit' | 'fill' | 'brush'
   const [view, setView] = useState('original');   // 'original' (baked GLB colours) | 'parts'
+  const [isolate, setIsolate] = useState(true);   // master: when on, clicking a part solos it (dims the rest)
+  const [soloId, setSoloId] = useState(null);     // the part the user clicked to FOCUS; null = show all parts in colour
   const [outline, setOutline] = useState(null);    // selected-part boundary line segments
+  // Editability is a GROUP-level decision, made after grouping is done — not per part. `groupsDone`
+  // reveals the editable grid; `editableGroups` maps a group name → whether the customer can recolour it.
+  const [groupsDone, setGroupsDone] = useState(false);
+  const [editableGroups, setEditableGroups] = useState({});
   const [colorTol, setColorTol] = useState(18);   // ΔE flood-fill colour tolerance
   const [creaseDeg, setCreaseDeg] = useState(35); // flood-fill crease stop (deg)
   const [brushRadius, setBrushRadius] = useState(0.12);
   const [clusterK, setClusterK] = useState(5);
-  const [importTris, setImportTris] = useState(60000);
+  const [importTris, setImportTris] = useState(120000); // live Detail target (tris); slider works until grouping locks it
+  const [fullTris, setFullTris] = useState(0);    // full-res triangle count (the slider's ceiling)
+  const [locked, setLocked] = useState(false);    // detail locked once segmentation (grouping) begins
   const [exportMode, setExportMode] = useState('parts'); // 'parts' (recolourable) | 'textured' (faithful)
   const [stats, setStats] = useState(null);       // {tris}
   const [busy, setBusy] = useState(false);
@@ -121,28 +130,36 @@ export default function GlbRecompose() {
   const [placementConfig, setPlacementConfig] = useState({});
   const [capabilities, setCapabilities] = useState({ resize: true, duplicate: true, color: true, delete: true, move: false, tilt: false });
   const [saveMsg, setSaveMsg] = useState(null);
-  const [topperSize, setTopperSize] = useState(1.0);
+  const [topperSize, setTopperSize] = useState(2.5); // match the designer's default GLB topper scale (placement_config.r)
 
   const [ambientInt] = useState(0.5);
   const [keyInt] = useState(1.3);   // softer key so the texture's pinks don't blow out
   const [fillInt] = useState(0.55);
 
-  const faceData = useRef(null);     // {triCount, adjacency, labs, normals, centroids}
+  const faceData = useRef(null);     // {triCount, adjacency, labs, normals, centroids} — built lazily on first grouping
   const faceParts = useRef(null);    // Int32Array(triCount) -> part id index
   const bakedColors = useRef(null);  // Float32Array(triCount*9) original baked colours
+  const fullGeoRef = useRef(null);   // full-res welded geo — the source the Detail slider simplifies from
+  const weldedRef = useRef(null);    // current simplified welded geo (faceData derives from this)
+  const triCountRef = useRef(0);     // current display triangle count (retint needs it before faceData exists)
+  const lockedRef = useRef(false);   // sync mirror of `locked` for guards inside async detail changes
   const partsRef = useRef([]);
   const selectedRef = useRef(null);
   const toolRef = useRef('orbit');
   const viewRef = useRef('original');
+  const isolateRef = useRef(true);
+  const soloRef = useRef(null);
   const previewRef = useRef(null);
   const controlsRef = useRef(null);
   const partSeq = useRef(0);
 
   useEffect(() => { fetchElementTypes().then(setElementTypes).catch(() => {}); }, []);
   useEffect(() => { partsRef.current = parts; }, [parts]);
-  useEffect(() => { selectedRef.current = selectedId; computeOutline(); }, [selectedId]);
+  useEffect(() => { selectedRef.current = selectedId; retint(); computeOutline(); }, [selectedId]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { viewRef.current = view; retint(); computeOutline(); }, [view]);
+  useEffect(() => { isolateRef.current = isolate; retint(); computeOutline(); }, [isolate]);
+  useEffect(() => { soloRef.current = soloId; retint(); computeOutline(); }, [soloId]);
 
   // ----- tint: write each face's part colour into the display colour attribute.
   // faceParts holds the part's ARRAY INDEX; resolve it through partsRef. We show
@@ -152,19 +169,40 @@ export default function GlbRecompose() {
     const p = partsRef.current[idx];
     return new THREE.Color(p ? p.color : '#bbbbbb'); // hex → linear (ColorManagement)
   }
+  // Solo is active only when the user has FOCUSED a part (soloId) — not on the auto-selection from
+  // clustering. So after clustering the model shows full part colours; clicking a part greys the rest.
+  function isoActive() { return isolateRef.current && soloRef.current != null && partsRef.current.length > 1; }
   function retint(faces) {
     if (!geo || !faceParts.current) return;
     const attr = geo.attributes.color;
     const arr = attr.array;
+    const baked = bakedColors.current;
+    // Isolate/solo: the selected part keeps its baked (real) colour; every other face dims to a flat
+    // light grey so the active region pops. Renders on the editable geo (EditMesh), both views.
+    if (isoActive() && baked) {
+      const selIdx = partsRef.current.findIndex(p => p.id === soloRef.current);
+      const G = 0.5; // dimmed-face grey level (linear)
+      const list = faces || range(triCountRef.current);
+      for (const f of list) {
+        const sel = faceParts.current[f] === selIdx;
+        for (let v = 0; v < 3; v++) {
+          const o = (f * 3 + v) * 3;
+          if (sel && selIdx >= 0) { arr[o] = baked[o]; arr[o + 1] = baked[o + 1]; arr[o + 2] = baked[o + 2]; }
+          else { arr[o] = G; arr[o + 1] = G; arr[o + 2] = G; }
+        }
+      }
+      attr.needsUpdate = true;
+      return;
+    }
     // 'original' view = show the baked GLB colours (the segmentation reference);
     // 'parts' view = tint each face by its assigned part.
     if (viewRef.current === 'original') {
-      if (bakedColors.current) arr.set(bakedColors.current);
+      if (baked) arr.set(baked);
       attr.needsUpdate = true;
       return;
     }
     const cache = {};
-    const list = faces || range(faceData.current.triCount);
+    const list = faces || range(triCountRef.current);
     for (const f of list) {
       const pid = faceParts.current[f];
       const c = cache[pid] || (cache[pid] = partLinColor(pid));
@@ -186,7 +224,7 @@ export default function GlbRecompose() {
   // face (i.e. where the part meets non-selected faces or the mesh edge). Welds by
   // quantised position so the trace is continuous across the non-indexed display.
   function computeOutline() {
-    if (!geo || viewRef.current !== 'parts' || !faceParts.current || selectedRef.current == null) { setOutline(null); return; }
+    if (!geo || !faceParts.current || selectedRef.current == null || (viewRef.current !== 'parts' && !isoActive())) { setOutline(null); return; }
     const target = partsRef.current.findIndex(p => p.id === selectedRef.current);
     if (target < 0) { setOutline(null); return; }
     setOutline(boundaryEdges(geo.attributes.position.array, faceParts.current, target));
@@ -200,16 +238,13 @@ export default function GlbRecompose() {
       const url = URL.createObjectURL(file);
       const gltf = await loader().loadAsync(url);
       URL.revokeObjectURL(url);
-      // buildWorkingGeo is non-destructive (it clones geometries), so gltf.scene
-      // keeps its full mesh + texture for the faithful Original view.
-      const welded = await buildWorkingGeo(gltf.scene, importTris);
-      const fd = deriveFaceData(welded);
+      // Bake + weld the FULL-RES mesh once; keep it as the source the Detail slider simplifies from.
+      const full = await bakeAndWeldGeo(gltf.scene);
+      fullGeoRef.current = full;
+      const fullCount = full.index.count / 3;
+      setFullTris(fullCount);
 
-      const display = welded.toNonIndexed();
-      display.computeBoundsTree();
-      bakedColors.current = Float32Array.from(display.attributes.color.array);
-
-      // normalise the pristine scene the same way buildWorkingGeo normalised the
+      // normalise the pristine scene the same way bakeAndWeldGeo normalised the
       // working geo (centre at origin, longest side → 2 units) so both views align.
       const obox = new THREE.Box3().setFromObject(gltf.scene);
       const oc = new THREE.Vector3(); obox.getCenter(oc);
@@ -220,29 +255,66 @@ export default function GlbRecompose() {
       ogrp.scale.setScalar(2 / (Math.max(osize.x, osize.y, osize.z) || 1));
       setOrigScene(ogrp);
 
-      faceData.current = fd;
-      faceParts.current = new Int32Array(fd.triCount); // all → part 0
-
-      partSeq.current = 0;
-      const id = `p${partSeq.current++}`;
-      const initParts = [{ id, label: 'Part 1', color: '#cccccc', finish: 'matte', group: '', editable: false }];
-      partsRef.current = initParts;
-      selectedRef.current = id;
-
-      setGeo(display);
-      setParts(initParts);
-      setSelectedId(id);
-      setStats({ tris: fd.triCount });
       setName(file.name.replace(/\.(glb|gltf)$/i, '').replace(/[-_]/g, ' ').trim());
       setTool('orbit');
+      setLocked(false); lockedRef.current = false;
       viewRef.current = 'original'; setView('original'); // show the real GLB colours
-      retint();
-      recount();
+
+      // Initial detail: start at the live target capped to the full count, then let the slider tune it.
+      const initTarget = Math.min(fullCount, importTris);
+      setImportTris(initTarget);
+      await applyDetail(initTarget);
     } catch (e) {
       setError(`Import failed: ${e.message}`);
     } finally {
       setBusy(false);
     }
+  }
+
+  // Re-simplify from the cached full-res geo to `target` and rebuild the display. Resets parts (the
+  // triangles change), so it's only allowed BEFORE grouping locks the detail. faceData is left null
+  // and built lazily on the first grouping action (ensureFaceData) — keeps slider drags snappy.
+  async function applyDetail(target) {
+    if (!fullGeoRef.current || lockedRef.current) return;
+    setBusy(true); setError(null);
+    try {
+      const welded = await simplifyWeldedGeo(fullGeoRef.current, target);
+      weldedRef.current = welded;
+      const display = welded.toNonIndexed();
+      display.computeBoundsTree();
+      bakedColors.current = Float32Array.from(display.attributes.color.array);
+      const triCount = display.attributes.position.count / 3;
+      triCountRef.current = triCount;
+      faceData.current = null;                       // rebuilt lazily when grouping starts
+      faceParts.current = new Int32Array(triCount);  // reset → single part
+      partSeq.current = 0;
+      const id = `p${partSeq.current++}`;
+      const single = [{ id, label: 'Part 1', color: '#cccccc', finish: 'matte', group: '' }];
+      partsRef.current = single;
+      setParts(single);
+      setSelectedId(id); selectedRef.current = id;
+      setSoloId(null); soloRef.current = null;
+      setGeo(display);
+      setStats({ tris: triCount });
+      setTimeout(() => { retint(); recount(); }, 0);
+    } catch (e) {
+      setError(`Detail change failed: ${e.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Build the per-face segmentation data on demand and lock the Detail slider (grouping has begun).
+  function ensureFaceData() {
+    if (!faceData.current && weldedRef.current) faceData.current = deriveFaceData(weldedRef.current);
+    if (!lockedRef.current) { lockedRef.current = true; setLocked(true); }
+  }
+  // Unlock the Detail slider and re-balance — discards parts (their per-triangle assignments no
+  // longer map once the mesh re-simplifies). Also resets group editability since parts are gone.
+  function resetDetail() {
+    lockedRef.current = false; setLocked(false);
+    setGroupsDone(false); setEditableGroups({});
+    applyDetail(importTris);
   }
 
   // ----- segmentation ops
@@ -256,18 +328,21 @@ export default function GlbRecompose() {
     setParts(newParts);
     setSelectedId(newParts[0].id);
     selectedRef.current = newParts[0].id;
+    setSoloId(null); soloRef.current = null;       // show ALL parts in colour after clustering
     viewRef.current = 'parts'; setView('parts'); // show the cluster result
     setTimeout(() => { retint(); recount(); computeOutline(); }, 0);
   }
   // split by colour only — same-coloured regions anywhere become ONE part.
   function autoCluster() {
-    if (!faceData.current) return;
+    if (!geo) return;
+    ensureFaceData();
     applyClustering(kmeans(faceData.current.labs, faceData.current.triCount, clusterK));
   }
   // split by colour AND connectivity — same colour but separate regions (eyes vs
   // shoes) become distinct parts you can recolour independently.
   function autoClusterRegions() {
-    if (!faceData.current) return;
+    if (!geo) return;
+    ensureFaceData();
     applyClustering(clusterConnected(faceData.current, clusterK));
   }
 
@@ -285,13 +360,15 @@ export default function GlbRecompose() {
   }
 
   function floodFill(startFace) {
-    if (startFace == null || !faceData.current) return;
+    if (startFace == null || !geo) return;
+    ensureFaceData();
     assignFaces(floodFillFaces(faceData.current, startFace, { colorTol, creaseDeg }));
     recount(); computeOutline();
   }
 
   function paintAt(faceIndex, point) {
-    if (faceIndex == null || !faceData.current) return;
+    if (faceIndex == null || !geo) return;
+    ensureFaceData();
     assignFaces(brushFaces(faceData.current, faceIndex, point, brushRadius));
   }
   // brush stroke finished — refresh counts + the selection outline once (not per move).
@@ -308,17 +385,6 @@ export default function GlbRecompose() {
     setParts(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
     setTimeout(retint, 0);
   }
-  // Expose = whether the customer can recolour this in the designer. Parts sharing
-  // a group name are one control, so toggling one propagates to its group-mates.
-  function toggleExpose(id) {
-    setParts(prev => {
-      const part = prev.find(p => p.id === id);
-      if (!part) return prev;
-      const next = !part.editable;
-      const grp = part.group?.trim();
-      return prev.map(p => (p.id === id || (grp && p.group?.trim() === grp)) ? { ...p, editable: next } : p);
-    });
-  }
   function removePart(id) {
     if (parts.length <= 1) return;
     const idx = parts.findIndex(p => p.id === id);
@@ -333,17 +399,25 @@ export default function GlbRecompose() {
     setParts(next);
     const sel = next[Math.max(0, idx - 1)].id;
     setSelectedId(sel); selectedRef.current = sel;
+    setSoloId(null); soloRef.current = null;   // drop solo so the full coloured set shows again
     setTimeout(() => { retint(); recount(); }, 0);
   }
 
   // ----- export / save
-  // Recolourable-parts export: one flat-coloured mesh per part, each carrying
-  // userData.part + a root part-map (same convention as GLB Studio).
+  // A part's group key = its trimmed group name ('' = ungrouped). Editability is decided per GROUP
+  // (the editableGroups grid), so only NAMED groups can be customer-editable; ungrouped parts always
+  // export as fixed-colour. The designer recolours meshes by matching userData.group to a group key.
+  function groupKeyOf(part) { return (part.group || '').trim(); }
+
+  // Recolourable-parts export: one flat-coloured mesh per segment, each carrying userData.segment +
+  // userData.group (effective key). placement_config._model = { segments, groups } — segments are the
+  // mesh regions of THIS GLB (distinct from placement_config.parts = composite child-element refs);
+  // groups are the customer-facing colour controls (editable segments, collapsed by key).
   async function buildPartsBuffer() {
     const fp = faceParts.current;
     const pos = geo.attributes.position.array;
     const root = new THREE.Group();
-    const metaParts = [];
+    const metaSegments = [];
     partsRef.current.forEach((part, idx) => {
       const tris = [];
       for (let f = 0; f < fp.length; f++) if (fp[f] === idx) tris.push(f);
@@ -361,16 +435,28 @@ export default function GlbRecompose() {
       const mat = new THREE.MeshStandardMaterial({ color: part.color, roughness: fin.rough, metalness: fin.metal });
       const mesh = new THREE.Mesh(g, mat);
       mesh.name = part.label;
-      mesh.userData.part = part.id;
-      mesh.userData.group = part.group || '';
-      mesh.userData.editable = !!part.editable;
+      const gkey = groupKeyOf(part);
+      const isEd = !!gkey && !!editableGroups[gkey];
+      mesh.userData.segment = part.id;
+      mesh.userData.group = gkey;
+      mesh.userData.editable = isEd;
       root.add(mesh);
-      metaParts.push({ id: part.id, label: part.label, default: part.color, finish: part.finish, group: part.group || '', editable: !!part.editable });
+      metaSegments.push({ id: part.id, label: part.label, default: part.color, finish: part.finish, group: gkey, editable: isEd });
     });
-    root.userData.parts = metaParts;
+    // Customer-facing controls: one per distinct NAMED group the admin marked editable. Label = the
+    // group name; default colour = the first member's colour. (Editability is group-level, not per part.)
+    const groups = [];
+    const seen = new Set();
+    partsRef.current.forEach(part => {
+      const key = groupKeyOf(part);
+      if (!key || !editableGroups[key] || seen.has(key)) return;
+      seen.add(key);
+      groups.push({ key, label: key, editable: true, default: part.color });
+    });
+    root.userData.segments = metaSegments;
     const buffer = await new Promise((res, rej) =>
       new GLTFExporter().parse(root, res, rej, { binary: true, includeCustomExtensions: true }));
-    return { buffer, metaParts };
+    return { buffer, metaSegments, groups };
   }
 
   // Faithful export: the pristine textured GLB, UV-preserving simplified + textures
@@ -380,7 +466,7 @@ export default function GlbRecompose() {
     const root = await buildTexturedScene(origScene, importTris, 1024);
     const buffer = await new Promise((res, rej) =>
       new GLTFExporter().parse(root, res, rej, { binary: true }));
-    return { buffer, metaParts: [] };
+    return { buffer, metaSegments: [], groups: [] };
   }
 
   function buildGLBBuffer() {
@@ -421,7 +507,7 @@ export default function GlbRecompose() {
       let thumbBlob = rawThumb;
       try { thumbBlob = await removeBg(rawThumb); } catch (e) { console.warn('remove.bg failed:', e.message); }
 
-      const { buffer, metaParts } = await buildGLBBuffer();
+      const { buffer, metaSegments, groups } = await buildGLBBuffer();
       const glbBlob = new Blob([buffer], { type: 'model/gltf-binary' });
       const { url: fu, key: fk } = await getSignedUploadUrl('elements/files/3D', `${crypto.randomUUID()}.glb`, 'model/gltf-binary');
       await uploadToR2(fu, glbBlob);
@@ -435,7 +521,7 @@ export default function GlbRecompose() {
         image_url: fk,
         thumbnail_url: tk,
         allowed_zones: zones,
-        placement_config: { ...placementConfig, r: topperSize, _model: { parts: metaParts, mode: exportMode, source: 'glb-recompose' } },
+        placement_config: { ...placementConfig, r: topperSize, _model: { segments: metaSegments, groups, mode: exportMode, source: 'glb-recompose' } },
         allowed_actions: capabilities,
         default_color: exportMode === 'parts' ? (parts[0]?.color ?? null) : null,
         sort_order: 0,
@@ -447,9 +533,8 @@ export default function GlbRecompose() {
 
   const activeParts = parts.filter(p => (counts[parts.indexOf(p)] || 0) > 0);
   const groupNames = [...new Set(parts.map(p => (p.group || '').trim()).filter(Boolean))];
-  // customer-facing controls = distinct exposed groups (grouped parts collapse to
-  // one control by group name; an exposed ungrouped part is its own control by label).
-  const customerControls = [...new Set(parts.filter(p => p.editable).map(p => (p.group || '').trim() || p.label))];
+  // customer-facing controls = the named groups the admin ticked editable in the grid.
+  const customerControls = groupNames.filter(n => editableGroups[n]);
 
   return (
     <div style={S.page}>
@@ -466,12 +551,20 @@ export default function GlbRecompose() {
               <input type="file" accept=".glb,.gltf" style={{ display: 'none' }}
                 onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; importFile(f); }} />
             </label>
-            <div style={{ marginTop: 12 }}>
-              <label style={S.elLabel}>Simplify on import — target {importTris.toLocaleString()} tris</label>
-              <input type="range" min={8000} max={150000} step={2000} value={importTris}
-                onChange={e => setImportTris(+e.target.value)} style={{ width: '100%' }} disabled={!!geo} />
-              {geo && <div style={S.hint}>Re-import to change the budget.</div>}
-            </div>
+            {!geo && <div style={S.hint}>After importing you can dial the detail up or down live — find the balance, then start grouping.</div>}
+            {geo && (
+              <div style={{ marginTop: 12 }}>
+                <label style={S.elLabel}>Detail — {importTris.toLocaleString()} / {fullTris.toLocaleString()} tris</label>
+                <input type="range" min={3000} max={fullTris || 150000} step={1000} value={importTris}
+                  onChange={e => setImportTris(+e.target.value)}
+                  onPointerUp={() => applyDetail(importTris)}
+                  onKeyUp={() => applyDetail(importTris)}
+                  style={{ width: '100%' }} disabled={locked || busy} />
+                {locked
+                  ? <div style={S.hint}>Detail locked at {stats?.tris?.toLocaleString()} tris (grouping started). <button onClick={resetDetail} style={S.linkBtn}>Reset detail</button> clears parts to re-balance.</div>
+                  : <div style={S.hint}>Lower to lighten the file; raise for finer detail (e.g. hair). Locks when you start grouping.</div>}
+              </div>
+            )}
             {stats && <div style={S.hint}>Working mesh: {stats.tris.toLocaleString()} tris</div>}
             {error && <div style={S.err}>{error}</div>}
           </div>
@@ -484,8 +577,9 @@ export default function GlbRecompose() {
                   {[['original', 'Original'], ['parts', 'Parts']].map(([v, l]) => (
                     <button key={v} onClick={() => setView(v)} style={S.modeBtn(view === v)}>{l}</button>
                   ))}
+                  <button onClick={() => setIsolate(v => !v)} style={S.modeBtn(isolate)} title="Dim everything except the selected part">Isolate</button>
                 </div>
-                <div style={S.hint}>Original shows the GLB's baked colours; Parts shows your segmentation.</div>
+                <div style={S.hint}>Original shows the GLB's baked colours; Parts shows your segmentation in colour. Click a part to solo it (greys the rest) so you can spot merged regions like eyes; click it again to show all. Isolate toggles soloing off.</div>
               </div>
 
               <div style={S.section}>
@@ -534,11 +628,14 @@ export default function GlbRecompose() {
           )}
         </div>
 
-        {/* CENTER — viewport */}
-        <div style={S.card}>
+        {/* CENTER — viewport. Sticky so the model stays in view while the parts/groups list scrolls. */}
+        <div style={{ ...S.card, position: 'sticky', top: 16, alignSelf: 'start' }}>
           <div ref={previewRef} style={{ height: 520, borderRadius: 12, overflow: 'hidden', background: '#E8EDE9', cursor: tool === 'orbit' ? 'grab' : 'crosshair' }}>
             <Canvas gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 0.6, 4], fov: 40 }}>
-              <Scene geometry={geo} originalObject={origScene} view={view} outline={outline} toolRef={toolRef} tool={tool} controlsRef={controlsRef}
+              <Scene geometry={geo} originalObject={origScene}
+                showGeo={view === 'parts' || (isolate && selectedId != null && parts.length > 1)}
+                showOriginal={!(view === 'parts' || (isolate && selectedId != null && parts.length > 1))}
+                outline={outline} toolRef={toolRef} tool={tool} controlsRef={controlsRef}
                 ambientInt={ambientInt} keyInt={keyInt} fillInt={fillInt}
                 onFill={floodFill} onBrushStart={paintAt} onBrushMove={paintAt} onBrushEnd={endBrush} />
             </Canvas>
@@ -556,7 +653,7 @@ export default function GlbRecompose() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {parts.map((p, idx) => (
                     <div key={p.id} style={{ ...S.partCard, borderColor: selectedId === p.id ? '#3D5A44' : '#E2E8E4' }}
-                      onClick={() => setSelectedId(p.id)}>
+                      onClick={() => { setSelectedId(p.id); setSoloId(prev => prev === p.id ? null : p.id); }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <input type="color" value={p.color} onClick={e => e.stopPropagation()}
                           onChange={e => updatePart(p.id, { color: e.target.value })} style={S.swatch} />
@@ -572,22 +669,47 @@ export default function GlbRecompose() {
                         </select>
                         <input list="grp-names" value={p.group || ''} placeholder="Group (e.g. Dress)" onClick={e => e.stopPropagation()}
                           onChange={e => updatePart(p.id, { group: e.target.value })} style={S.groupInput} />
-                        <label onClick={e => e.stopPropagation()} title="Let the customer recolour this in the designer"
-                          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 700, color: p.editable ? '#2C4433' : '#9BB5A2', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                          <input type="checkbox" checked={!!p.editable} onChange={() => toggleExpose(p.id)} /> Show
-                        </label>
                       </div>
                     </div>
                   ))}
                 </div>
                 <button style={S.addBtn} onClick={addPart}>Add part</button>
                 <div style={S.hint}>
-                  Select a part, then Fill/Brush assigns faces to it. Give parts the same Group name to recolour them together; tick Show to let the customer recolour that group in the designer.
+                  Select a part, then Fill/Brush assigns faces to it. Give parts the same Group name (e.g. both shoes → "Shoes") to recolour them together as one control.
                 </div>
-                {customerControls.length > 0 && (
-                  <div style={{ marginTop: 10, padding: '8px 12px', background: '#E8EDE9', borderRadius: 8, fontSize: 12, fontWeight: 700, color: '#2C4433' }}>
-                    Customer controls: {customerControls.join(', ')}
-                  </div>
+              </div>
+
+              {/* Customer-editable groups — decided at the GROUP level once grouping is done. */}
+              <div style={S.section}>
+                <div style={S.sectionTitle}>Customer colours</div>
+                {!groupsDone ? (
+                  <>
+                    <div style={S.hint}>
+                      Finish naming your groups above, then confirm to choose which groups the customer can recolour.
+                    </div>
+                    <button style={S.addBtn} onClick={() => setGroupsDone(true)} disabled={groupNames.length === 0}>
+                      {groupNames.length === 0 ? 'Add a group name first' : `Done grouping (${groupNames.length} group${groupNames.length > 1 ? 's' : ''}) →`}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div style={S.hint}>Tick the groups the customer can recolour in the designer.</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+                      {groupNames.map(g => (
+                        <label key={g} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', background: '#F4F8F5', borderRadius: 8, border: `1.5px solid ${editableGroups[g] ? '#3D5A44' : '#E2E8E4'}`, fontSize: 12, fontWeight: 700, color: '#2C4433', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!editableGroups[g]}
+                            onChange={() => setEditableGroups(prev => ({ ...prev, [g]: !prev[g] }))} />
+                          {g}
+                        </label>
+                      ))}
+                    </div>
+                    <button style={{ ...S.addBtn, marginTop: 10 }} onClick={() => setGroupsDone(false)}>← Edit groups</button>
+                    {customerControls.length > 0 && (
+                      <div style={{ marginTop: 10, padding: '8px 12px', background: '#E8EDE9', borderRadius: 8, fontSize: 12, fontWeight: 700, color: '#2C4433' }}>
+                        Customer controls: {customerControls.join(', ')}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -686,6 +808,7 @@ const S = {
   labelInput: { flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 6, border: '1.5px solid #C5D4C8', fontFamily: 'Quicksand, sans-serif', fontSize: 13, fontWeight: 700, color: '#2C4433', background: '#fff' },
   delBtn: { width: 24, height: 24, borderRadius: 6, border: 'none', background: '#F0E0E0', color: '#C0392B', cursor: 'pointer', fontWeight: 800, flexShrink: 0 },
   addBtn: { marginTop: 10, padding: '8px 14px', borderRadius: 8, border: '1.5px solid #C5D4C8', background: '#fff', color: '#3D5A44', fontFamily: 'Quicksand, sans-serif', fontSize: 12, fontWeight: 700, cursor: 'pointer' },
+  linkBtn: { background: 'none', border: 'none', padding: 0, color: '#3D5A44', fontFamily: 'Quicksand, sans-serif', fontSize: 11, fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' },
   modeBtn: (a) => ({ flex: 1, padding: '8px 6px', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'Quicksand, sans-serif', fontSize: 12, fontWeight: 700, background: a ? '#3D5A44' : '#E8EDE9', color: a ? '#fff' : '#6B8C74' }),
   input: { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #C5D4C8', fontFamily: 'Quicksand, sans-serif', fontSize: 14, fontWeight: 600, color: '#2C4433', background: '#fff', boxSizing: 'border-box', outline: 'none' },
   elLabel: { fontSize: 12, fontWeight: 700, color: '#6B8C74', display: 'block', marginBottom: 6, marginTop: 6 },

@@ -992,10 +992,10 @@ export default function PipingCalibrator() {
 
             {/* Position tweaks */}
             <div style={{ fontSize: 11, fontWeight: 800, color: '#9B5F72', marginBottom: 6, marginTop: 10, textTransform: 'uppercase', letterSpacing: 0.8 }}>Position</div>
-            <Slider label="Radial offset" value={cfg.radialOffset} min={-1.5} max={0.5} step={0.01} onChange={set('radialOffset')} />
-            <Slider label="Y offset" value={cfg.yOffset} min={-0.2} max={1.2} step={0.01} onChange={set('yOffset')} />
+            <Slider label="Radial offset" value={cfg.radialOffset} min={-2} max={2} step={0.01} onChange={set('radialOffset')} />
+            <Slider label="Y offset" value={cfg.yOffset} min={-0.5} max={4} step={0.01} onChange={set('yOffset')} />
             {!cfg.wrap && (
-              <Slider label="Size" value={cfg.sizeFactor} min={0.3} max={3} step={0.05} resetTo={1} onChange={set('sizeFactor')} color="#e0a052" />
+              <Slider label="Size" value={cfg.sizeFactor} min={0.2} max={8} step={0.05} resetTo={1} onChange={set('sizeFactor')} color="#e0a052" />
             )}
             <Slider label="Spacing" value={cfg.spacing} min={0.5} max={2.5} step={0.05} resetTo={1} onChange={set('spacing')} />
             <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
@@ -1021,9 +1021,9 @@ export default function PipingCalibrator() {
               </button>
             </div>
             {cfg.wrap && <>
-              <Slider label="Size" value={cfg.wrapSize} min={0.2} max={2} step={0.05} resetTo={1} onChange={set('wrapSize')} color="#e0a052" />
+              <Slider label="Size" value={cfg.wrapSize} min={0.2} max={4} step={0.05} resetTo={1} onChange={set('wrapSize')} color="#e0a052" />
               <Slider label="Tilt" value={cfg.wrapTilt} min={-90} max={90} step={1} resetTo={0} onChange={set('wrapTilt')} color="#c47ad6" />
-              <Slider label="Radial offset" value={cfg.radialOffset} min={-1.5} max={0.5} step={0.01} resetTo={0} onChange={set('radialOffset')} />
+              <Slider label="Radial offset" value={cfg.radialOffset} min={-2} max={2} step={0.01} resetTo={0} onChange={set('radialOffset')} />
               <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
                 Wraps the whole ring around the cake wall as one band — auto-fits the tier (round <i>or</i> sheet),
                 no repeating shells. <b>Size</b> scales the band's height &amp; thickness (lower = slimmer).
@@ -1139,8 +1139,8 @@ export default function PipingCalibrator() {
               <Slider label="Alt X rotation" value={cfg.altRx} min={-180} max={180} onChange={set('altRx')} color="#e05252" />
               <Slider label="Alt Y rotation" value={cfg.altRy} min={-180} max={180} onChange={set('altRy')} color="#52c452" />
               <Slider label="Alt Z rotation" value={cfg.altRz} min={-180} max={180} onChange={set('altRz')} color="#5252e0" />
-              <Slider label="Alt radial" value={cfg.altRadialOffset} min={-1.5} max={0.5} step={0.01} onChange={set('altRadialOffset')} />
-              <Slider label="Alt Y offset" value={cfg.altYOffset} min={-0.2} max={1.2} step={0.01} onChange={set('altYOffset')} />
+              <Slider label="Alt radial" value={cfg.altRadialOffset} min={-2} max={2} step={0.01} onChange={set('altRadialOffset')} />
+              <Slider label="Alt Y offset" value={cfg.altYOffset} min={-0.5} max={4} step={0.01} onChange={set('altYOffset')} />
               <div style={{ fontSize: 10, color: '#9BB5A2', marginTop: -2, marginBottom: 6, lineHeight: 1.5 }}>
                 Version B alternates with the original per the ratio above. The alternate GLB url is set
                 when you upload it in <b>Manage Elements</b>; here you only tune B's transform + pattern.
