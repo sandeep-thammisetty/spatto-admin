@@ -458,6 +458,7 @@ export default function ManageElements() {
   const [singlePerSlot,      setSinglePerSlot]      = useState(false);
   const [canScatter,         setCanScatter]         = useState(false);
   const [sideProud,          setSideProud]          = useState(false);
+  const [useFondant,         setUseFondant]         = useState(false);   // placement_config.useSharedFondantTexture
   const [hugFill,            setHugFill]            = useState('');
   const [patternOnly,        setPatternOnly]        = useState(false);
   const [description,      setDescription]      = useState('');
@@ -524,6 +525,7 @@ export default function ManageElements() {
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setSinglePerSlot(pc.single_per_slot === true);
+    setUseFondant(pc.useSharedFondantTexture === true);
     setCanScatter(pc.scatter === true);
     setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
@@ -592,6 +594,7 @@ export default function ManageElements() {
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setSinglePerSlot(pc.single_per_slot === true);
+    setUseFondant(pc.useSharedFondantTexture === true);
     setCanScatter(pc.scatter === true);
     setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
@@ -665,6 +668,9 @@ export default function ManageElements() {
       // Building-block part of a pattern — hidden from the picker, placed via its parent pattern.
       if (patternOnly) parsedConfig.pattern_only = true;
       else delete parsedConfig.pattern_only;
+      // Shared fondant surface (designer overlays the matte grain under any colour). Off → GLB's own.
+      if (useFondant) parsedConfig.useSharedFondantTexture = true;
+      else delete parsedConfig.useSharedFondantTexture;
       // Facing offset persisted in DEGREES + rotation_unit:'deg' (unified with AddElement and the
       // piping calibrator; read by the designer via facingOffsetRadians). Clearing it drops both.
       if (glbRotation.some(v => v !== 0)) {
@@ -1507,6 +1513,17 @@ export default function ManageElements() {
                           <div style={s.checkLabel}>Single per slot (hero element)</div>
                           <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
                             One instance per tier×surface via the checkbox chooser (toppers, top&side decor), instead of free scatter.
+                          </div>
+                        </div>
+                      </label>
+                      <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}>
+                        <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
+                          checked={useFondant}
+                          onChange={e => { setUseFondant(e.target.checked); patchPc({ useSharedFondantTexture: e.target.checked ? true : null }); }} />
+                        <div>
+                          <div style={s.checkLabel}>Use shared fondant texture</div>
+                          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                            Overlays a soft, matte fondant grain in the designer (under any colour). Off = use the GLB's own surface.
                           </div>
                         </div>
                       </label>

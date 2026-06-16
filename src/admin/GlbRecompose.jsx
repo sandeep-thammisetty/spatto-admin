@@ -118,6 +118,7 @@ export default function GlbRecompose() {
   const [fullTris, setFullTris] = useState(0);    // full-res triangle count (the slider's ceiling)
   const [locked, setLocked] = useState(false);    // detail locked once segmentation (grouping) begins
   const [exportMode, setExportMode] = useState('parts'); // 'parts' (recolourable) | 'textured' (faithful)
+  const [useFondant, setUseFondant] = useState(true);    // overlay the shared fondant grain in the designer
   const [stats, setStats] = useState(null);       // {tris}
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -521,7 +522,7 @@ export default function GlbRecompose() {
         image_url: fk,
         thumbnail_url: tk,
         allowed_zones: zones,
-        placement_config: { ...placementConfig, r: topperSize, _model: { segments: metaSegments, groups, mode: exportMode, source: 'glb-recompose' } },
+        placement_config: { ...placementConfig, r: topperSize, useSharedFondantTexture: useFondant, _model: { segments: metaSegments, groups, mode: exportMode, source: 'glb-recompose' } },
         allowed_actions: capabilities,
         default_color: exportMode === 'parts' ? (parts[0]?.color ?? null) : null,
         sort_order: 0,
@@ -725,6 +726,11 @@ export default function GlbRecompose() {
                     ? 'Each part exports as a flat colour bakers can change. Loses fine texture detail.'
                     : 'Exports the original texture (lace, glitter) — faithful to the model, but not recolourable.'}
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12, fontWeight: 700, color: '#2C4433', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={useFondant} onChange={e => setUseFondant(e.target.checked)} />
+                  Use shared fondant texture
+                </label>
+                <div style={S.hint}>Overlays a soft, matte fondant grain in the designer (under any colour). Off = use the GLB's own surface.</div>
                 <button style={S.exportBtn(busy || !geo)} onClick={exportGLB} disabled={busy || !geo}>Export GLB</button>
               </div>
 
