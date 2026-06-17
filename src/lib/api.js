@@ -285,6 +285,33 @@ export async function saveTemplateAttrs(templateId, attrs) {
   return res.json();
 }
 
+// ── RBAC (roles & capabilities) ─────────────────────────────────────────────
+
+// The current user's resolved role + capabilities (server-authoritative).
+export async function fetchMe() {
+  return get('/api/me');
+}
+
+// { roles, capabilities, matrix: { roleKey: [capabilityKey, ...] } }
+export async function fetchRbac() {
+  return get('/api/admin/rbac');
+}
+
+export async function createCapability(payload) {
+  return post('/api/admin/capabilities', payload);
+}
+
+// Replace a role's full capability set. capabilities: [key, ...]
+export async function setRoleCapabilities(roleKey, capabilities) {
+  const res = await fetch(`${BASE_URL}/api/admin/roles/${roleKey}/capabilities`, {
+    method: 'PUT',
+    headers: await authHeaders(),
+    body: JSON.stringify({ capabilities }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
 export async function suggestElementMeta(thumbnailBlob, elementType) {
   const arrayBuffer = await thumbnailBlob.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);

@@ -28,6 +28,7 @@ const PipingCalibrator      = lazy(() => import('./admin/PipingCalibrator.jsx'))
 const PerchCalibrator       = lazy(() => import('./admin/PerchCalibrator.jsx'));
 const CreamPenStudio        = lazy(() => import('./admin/CreamPenStudio.jsx'));
 const FreehandPenStudio     = lazy(() => import('./admin/FreehandPenStudio.jsx'));
+const RolesCapabilities     = lazy(() => import('./admin/RolesCapabilities.jsx'));
 const ROUTES = {
   '/templates/create':    CreateTemplate,
   '/templates/design':    DesignTemplate,
@@ -50,6 +51,7 @@ const ROUTES = {
   '/elements/perch-calibrator':  PerchCalibrator,
   '/elements/cream-pen':         CreamPenStudio,
   '/elements/freehand-pen':      FreehandPenStudio,
+  '/admin/roles':                RolesCapabilities,
 };
 
 const FALLBACK = (
@@ -88,6 +90,9 @@ const NAV_GROUPS = [
   { title: 'Others', items: [
     { href: '/elements/nozzles', label: 'Nozzle Catalog' },
     { href: '/flavours',         label: 'Cake Flavours' },
+  ] },
+  { title: 'Access', items: [
+    { href: '/admin/roles', label: 'Roles & Capabilities' },
   ] },
 ];
 
