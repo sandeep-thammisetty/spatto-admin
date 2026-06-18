@@ -455,6 +455,8 @@ export default function ManageElements() {
   const [placementConfig,    setPlacementConfig]    = useState('{}');
   const [placementZoneConfig, setPlacementZoneConfig] = useState({});
   const [placementScale,      setPlacementScale]      = useState('');
+  const [placementScaleMin,   setPlacementScaleMin]   = useState('');   // placement_config.scale.min
+  const [placementScaleMax,   setPlacementScaleMax]   = useState('');   // placement_config.scale.max
   const [singlePerSlot,      setSinglePerSlot]      = useState(false);
   const [canScatter,         setCanScatter]         = useState(false);
   const [sideProud,          setSideProud]          = useState(false);
@@ -524,6 +526,8 @@ export default function ManageElements() {
     (el.allowed_zones ?? []).forEach(z => { if (pc[z]) zoneConf[z] = pc[z]; });
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
+    setPlacementScaleMin(pc.scale?.min != null ? String(pc.scale.min) : '');
+    setPlacementScaleMax(pc.scale?.max != null ? String(pc.scale.max) : '');
     setSinglePerSlot(pc.single_per_slot === true);
     setUseFondant(pc.useSharedFondantTexture === true);
     setCanScatter(pc.scatter === true);
@@ -593,6 +597,8 @@ export default function ManageElements() {
     (applicableZones ?? []).forEach(z => { if (pc[z]) zoneConf[z] = pc[z]; });
     setPlacementZoneConfig(zoneConf);
     setPlacementScale(pc.r != null ? String(pc.r) : '');
+    setPlacementScaleMin(pc.scale?.min != null ? String(pc.scale.min) : '');
+    setPlacementScaleMax(pc.scale?.max != null ? String(pc.scale.max) : '');
     setSinglePerSlot(pc.single_per_slot === true);
     setUseFondant(pc.useSharedFondantTexture === true);
     setCanScatter(pc.scatter === true);
@@ -609,6 +615,15 @@ export default function ManageElements() {
     try { syncStructuredFromPc(JSON.parse(text)); } catch { /* invalid mid-type: leave controls */ }
   }
   const numPatch = v => (v === '' || isNaN(parseFloat(v))) ? '' : parseFloat(v);
+  // Build the placement_config.scale patch from the min/max inputs: an object with only the set
+  // keys, or '' so patchPc removes `scale` entirely when both are blank. `cur`/`other` carry the
+  // sibling field's current string (a min edit keeps the existing max, and vice-versa).
+  const scalePatch = (minStr, maxStr) => {
+    const o = {};
+    if (numPatch(minStr) !== '') o.min = numPatch(minStr);
+    if (numPatch(maxStr) !== '') o.max = numPatch(maxStr);
+    return Object.keys(o).length ? o : '';
+  };
 
   async function handleSave(withThumbnail = false) {
     if (!selectedEl || !name.trim()) {
@@ -650,6 +665,11 @@ export default function ManageElements() {
       applicableZones.forEach(z => { parsedConfig[z] = placementZoneConfig[z] || 'hug'; });
       if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
       else delete parsedConfig.r;
+      // Optional size-dial bounds { min, max } (each independent). r is the default WITHIN this
+      // range; both blank → drop the key so the designer keeps its built-in bounds.
+      const scaleBounds = scalePatch(placementScaleMin, placementScaleMax);
+      if (scaleBounds !== '') parsedConfig.scale = scaleBounds;
+      else delete parsedConfig.scale;
       // Placement STYLE (hero = one instance per tier×surface vs. free scatter). Config-driven,
       // never inferred from element type — see spattoo-core INVARIANTS.md rule #4.
       if (singlePerSlot) parsedConfig.single_per_slot = true;
@@ -1504,6 +1524,22 @@ export default function ManageElements() {
                           value={placementScale}
                           placeholder="e.g. 2.5 — leave blank for auto"
                           onChange={e => { setPlacementScale(e.target.value); patchPc({ r: numPatch(e.target.value) }); }} />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Size range</span>
+                        <input type="number" min="0.1" step="0.1"
+                          style={{ ...s.input, flex: 1 }}
+                          value={placementScaleMin}
+                          placeholder="min — e.g. 0.5"
+                          onChange={e => { setPlacementScaleMin(e.target.value); patchPc({ scale: scalePatch(e.target.value, placementScaleMax) }); }} />
+                        <input type="number" min="0.1" step="0.1"
+                          style={{ ...s.input, flex: 1 }}
+                          value={placementScaleMax}
+                          placeholder="max — e.g. 1.5"
+                          onChange={e => { setPlacementScaleMax(e.target.value); patchPc({ scale: scalePatch(placementScaleMin, e.target.value) }); }} />
+                      </div>
+                      <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                        Limits how far users can resize this element in the designer (e.g. sprinkles stay small). Either bound is optional; blank both for the designer defaults. Keep the default scale (r) within this range.
                       </div>
                       <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 6 }}>
                         <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}

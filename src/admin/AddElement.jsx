@@ -274,6 +274,8 @@ export default function AddElement() {
   const [thumbnailBlob, setThumbnailBlob] = useState(null);
   const [placementConfig, setPlacementConfig] = useState({});
   const [placementScale, setPlacementScale]   = useState('');
+  const [placementScaleMin, setPlacementScaleMin] = useState('');   // placement_config.scale.min
+  const [placementScaleMax, setPlacementScaleMax] = useState('');   // placement_config.scale.max
   const [singlePerSlot,  setSinglePerSlot]    = useState(false);
   const [canScatter,     setCanScatter]       = useState(false);
   const [sideProud,      setSideProud]        = useState(false);
@@ -537,6 +539,12 @@ export default function AddElement() {
           builtPlacementConfig[zone] = placementConfig[zone] || 'hug';
         }
         if (placementScale !== '') builtPlacementConfig.r = parseFloat(placementScale);
+        // Optional size-dial bounds in the designer: { min, max } (each independent). r is the
+        // default WITHIN this range. Omitted when both blank → designer keeps its built-in bounds.
+        const scaleBounds = {};
+        if (placementScaleMin !== '') scaleBounds.min = parseFloat(placementScaleMin);
+        if (placementScaleMax !== '') scaleBounds.max = parseFloat(placementScaleMax);
+        if (Object.keys(scaleBounds).length) builtPlacementConfig.scale = scaleBounds;
         // Placement STYLE: hero (one per tier×surface) vs. free scatter. Config-driven, never
         // inferred from element type — see spattoo-core INVARIANTS.md rule #4.
         if (effectiveCanScatter) builtPlacementConfig.scatter = true;        // sprinkles: density-driven, packed
@@ -613,6 +621,8 @@ export default function AddElement() {
       setThumbnailBlob(null);
       setPlacementConfig({});
       setPlacementScale('');
+      setPlacementScaleMin('');
+      setPlacementScaleMax('');
       setSinglePerSlot(false);
       setCanScatter(false);
       setSideProud(false);
@@ -954,6 +964,14 @@ export default function AddElement() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Default scale (r)</span>
                   <input type="number" min="0.1" step="0.1" style={{ ...s.input, flex: 1 }} value={placementScale} placeholder="e.g. 2.5 — leave blank for auto" onChange={e => setPlacementScale(e.target.value)} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Size range</span>
+                  <input type="number" min="0.1" step="0.1" style={{ ...s.input, flex: 1 }} value={placementScaleMin} placeholder="min — e.g. 0.5" onChange={e => setPlacementScaleMin(e.target.value)} />
+                  <input type="number" min="0.1" step="0.1" style={{ ...s.input, flex: 1 }} value={placementScaleMax} placeholder="max — e.g. 1.5" onChange={e => setPlacementScaleMax(e.target.value)} />
+                </div>
+                <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                  Limits how far users can resize this element in the designer (e.g. sprinkles stay small). Either bound is optional; leave both blank for the designer defaults. Keep the default scale (r) within this range.
                 </div>
                 <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}>
                   <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={effectiveCanScatter} disabled={isScatterType} onChange={e => setCanScatter(e.target.checked)} />
