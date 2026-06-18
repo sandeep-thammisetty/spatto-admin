@@ -457,6 +457,7 @@ export default function ManageElements() {
   const [placementScale,      setPlacementScale]      = useState('');
   const [placementScaleMin,   setPlacementScaleMin]   = useState('');   // placement_config.scale.min
   const [placementScaleMax,   setPlacementScaleMax]   = useState('');   // placement_config.scale.max
+  const [placementScaleStep,  setPlacementScaleStep]  = useState('');   // placement_config.scale.step
   const [singlePerSlot,      setSinglePerSlot]      = useState(false);
   const [canScatter,         setCanScatter]         = useState(false);
   const [sideProud,          setSideProud]          = useState(false);
@@ -528,6 +529,7 @@ export default function ManageElements() {
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setPlacementScaleMin(pc.scale?.min != null ? String(pc.scale.min) : '');
     setPlacementScaleMax(pc.scale?.max != null ? String(pc.scale.max) : '');
+    setPlacementScaleStep(pc.scale?.step != null ? String(pc.scale.step) : '');
     setSinglePerSlot(pc.single_per_slot === true);
     setUseFondant(pc.useSharedFondantTexture === true);
     setCanScatter(pc.scatter === true);
@@ -599,6 +601,7 @@ export default function ManageElements() {
     setPlacementScale(pc.r != null ? String(pc.r) : '');
     setPlacementScaleMin(pc.scale?.min != null ? String(pc.scale.min) : '');
     setPlacementScaleMax(pc.scale?.max != null ? String(pc.scale.max) : '');
+    setPlacementScaleStep(pc.scale?.step != null ? String(pc.scale.step) : '');
     setSinglePerSlot(pc.single_per_slot === true);
     setUseFondant(pc.useSharedFondantTexture === true);
     setCanScatter(pc.scatter === true);
@@ -616,12 +619,13 @@ export default function ManageElements() {
   }
   const numPatch = v => (v === '' || isNaN(parseFloat(v))) ? '' : parseFloat(v);
   // Build the placement_config.scale patch from the min/max inputs: an object with only the set
-  // keys, or '' so patchPc removes `scale` entirely when both are blank. `cur`/`other` carry the
-  // sibling field's current string (a min edit keeps the existing max, and vice-versa).
-  const scalePatch = (minStr, maxStr) => {
+  // keys, or '' so patchPc removes `scale` entirely when all are blank. The sibling fields' current
+  // strings are passed through so editing one (min/max/step) keeps the others.
+  const scalePatch = (minStr, maxStr, stepStr) => {
     const o = {};
-    if (numPatch(minStr) !== '') o.min = numPatch(minStr);
-    if (numPatch(maxStr) !== '') o.max = numPatch(maxStr);
+    if (numPatch(minStr)  !== '') o.min  = numPatch(minStr);
+    if (numPatch(maxStr)  !== '') o.max  = numPatch(maxStr);
+    if (numPatch(stepStr) !== '') o.step = numPatch(stepStr);
     return Object.keys(o).length ? o : '';
   };
 
@@ -665,9 +669,9 @@ export default function ManageElements() {
       applicableZones.forEach(z => { parsedConfig[z] = placementZoneConfig[z] || 'hug'; });
       if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
       else delete parsedConfig.r;
-      // Optional size-dial bounds { min, max } (each independent). r is the default WITHIN this
-      // range; both blank → drop the key so the designer keeps its built-in bounds.
-      const scaleBounds = scalePatch(placementScaleMin, placementScaleMax);
+      // Optional size-dial bounds { min, max, step } (each independent). r is the default WITHIN this
+      // range; all blank → drop the key so the designer keeps its built-in bounds.
+      const scaleBounds = scalePatch(placementScaleMin, placementScaleMax, placementScaleStep);
       if (scaleBounds !== '') parsedConfig.scale = scaleBounds;
       else delete parsedConfig.scale;
       // Placement STYLE (hero = one instance per tier×surface vs. free scatter). Config-driven,
@@ -1531,12 +1535,20 @@ export default function ManageElements() {
                           style={{ ...s.input, flex: 1 }}
                           value={placementScaleMin}
                           placeholder="min — e.g. 0.5"
-                          onChange={e => { setPlacementScaleMin(e.target.value); patchPc({ scale: scalePatch(e.target.value, placementScaleMax) }); }} />
+                          onChange={e => { setPlacementScaleMin(e.target.value); patchPc({ scale: scalePatch(e.target.value, placementScaleMax, placementScaleStep) }); }} />
                         <input type="number" min="0.1" step="0.1"
                           style={{ ...s.input, flex: 1 }}
                           value={placementScaleMax}
                           placeholder="max — e.g. 1.5"
-                          onChange={e => { setPlacementScaleMax(e.target.value); patchPc({ scale: scalePatch(placementScaleMin, e.target.value) }); }} />
+                          onChange={e => { setPlacementScaleMax(e.target.value); patchPc({ scale: scalePatch(placementScaleMin, e.target.value, placementScaleStep) }); }} />
+                        <input type="number" min="0.01" step="0.01"
+                          style={{ ...s.input, flex: 1 }}
+                          value={placementScaleStep}
+                          placeholder="step — e.g. 0.05"
+                          onChange={e => { setPlacementScaleStep(e.target.value); patchPc({ scale: scalePatch(placementScaleMin, placementScaleMax, e.target.value) }); }} />
+                      </div>
+                      <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                        Size-control bounds in the designer: min, max, and the step increment per notch. All optional. Pick a step that divides max−min evenly, and keep r within the range.
                       </div>
                       <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
                         Limits how far users can resize this element in the designer (e.g. sprinkles stay small). Either bound is optional; blank both for the designer defaults. Keep the default scale (r) within this range.
