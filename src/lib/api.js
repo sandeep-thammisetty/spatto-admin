@@ -136,6 +136,11 @@ export async function analyzeInspiration(imageBlob) {
   return post('/api/admin/inspiration/analyze', { imageBase64: btoa(binary), mimeType: imageBlob.type || 'image/jpeg' });
 }
 
+// Match an analysis spec's decorations to library elements → per-tier matches + coverage.
+export async function matchInspiration(analysis) {
+  return post('/api/admin/inspiration/match', { analysis });
+}
+
 export async function updateGlobalElement(id, payload) {
   const res = await fetch(`${BASE_URL}/api/admin/elements/${id}`, {
     method: 'PATCH',
