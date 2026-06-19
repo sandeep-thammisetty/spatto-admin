@@ -22,6 +22,7 @@ function createAdminApiClient(bakerId = null) {
 
   return {
     fetchElementTypes: () => authFetch('/api/element-types'),
+    fetchTextures: () => authFetch('/api/textures'),
     fetchElements: (opts = {}) => {
       const p = new URLSearchParams();
       if (opts.parentsOnly)    p.set('parents_only', 'true');

@@ -29,9 +29,12 @@ const PatternBuilder        = lazy(() => import('./admin/PatternBuilder.jsx'));
 const PipingCalibrator      = lazy(() => import('./admin/PipingCalibrator.jsx'));
 const PerchCalibrator       = lazy(() => import('./admin/PerchCalibrator.jsx'));
 const CreamPenStudio        = lazy(() => import('./admin/CreamPenStudio.jsx'));
+const ButterflyStudio       = lazy(() => import('./admin/ButterflyStudio.jsx'));
 const FreehandPenStudio     = lazy(() => import('./admin/FreehandPenStudio.jsx'));
 const RolesCapabilities     = lazy(() => import('./admin/RolesCapabilities.jsx'));
+const TextureCalibrator     = lazy(() => import('./admin/TextureCalibrator.jsx'));
 const ROUTES = {
+  '/elements/texture-calibrator': TextureCalibrator,
   '/templates/create':    CreateTemplate,
   '/templates/design':    DesignTemplate,
   '/templates':           ManageTemplates,
@@ -54,6 +57,7 @@ const ROUTES = {
   '/elements/piping-calibrator': PipingCalibrator,
   '/elements/perch-calibrator':  PerchCalibrator,
   '/elements/cream-pen':         CreamPenStudio,
+  '/elements/folded-sticker':    ButterflyStudio,
   '/elements/freehand-pen':      FreehandPenStudio,
   '/admin/roles':                RolesCapabilities,
 };
@@ -84,8 +88,10 @@ const NAV_GROUPS = [
     { href: '/glb-recompose',           label: 'GLB Recompose' },
     { href: '/elements/piping-calibrator', label: 'Piping Calibrator' },
     { href: '/elements/perch-calibrator',  label: 'Perch Calibrator' },
+    { href: '/elements/texture-calibrator', label: 'Texture Calibrator' },
     { href: '/elements/cream-pen',      label: 'Cream Pen' },
     { href: '/elements/freehand-pen',   label: 'Freehand Pen' },
+    { href: '/elements/folded-sticker', label: 'Folded Butterfly' },
     { href: '/pattern-builder',         label: 'Pattern Builder' },
   ] },
   { title: 'Baker', items: [

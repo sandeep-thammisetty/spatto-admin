@@ -64,6 +64,12 @@ export async function fetchElementTypes() {
   return get('/api/element-types');
 }
 
+// ── Cake textures (cream finish/style config) ──────────────────────────────────
+export async function fetchTextures()            { return get('/api/textures'); }
+export async function fetchAdminTextures()       { return get('/api/admin/textures'); }
+export async function createTexture(payload)     { return post('/api/admin/textures', payload); }
+export async function updateTexture(id, payload) { return patch(`/api/admin/textures/${id}`, payload); }
+
 export async function fetchAdminElementTypes() {
   return get('/api/admin/element-types');
 }

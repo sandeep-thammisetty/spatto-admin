@@ -2,3 +2,7 @@ node_modules
 dist
 .env.local
 .DS_Store
+
+# texture calibrator render snapshots (dev)
+snapshots/
+.snapshots/
