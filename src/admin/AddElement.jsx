@@ -281,6 +281,13 @@ export default function AddElement() {
   const [canScatter,     setCanScatter]       = useState(false);
   const [sideProud,      setSideProud]        = useState(false);
   const [hugFill,        setHugFill]          = useState('');
+  // Folded sticker (2D only): a flat decal splits at the body spine into two hinged wings.
+  const [foldable,   setFoldable]   = useState(false);
+  const [foldAngle,  setFoldAngle]  = useState('');   // placement_config.fold (deg, blank = default 30)
+  const [spineSplit, setSpineSplit] = useState('');   // placement_config.spine (0–1, blank = default 0.5)
+  // Pixel-recolour region for a colour-changeable 2D image (companion to allowed_actions.color).
+  const [recolorMethod, setRecolorMethod] = useState('opaque');   // 'opaque' | 'blue_gt_green'
+  const [recolorGuard,  setRecolorGuard]  = useState('12');       // blue_gt_green margin
   const [capabilities, setCapabilities]       = useState({ resize: true, duplicate: true, color: false, gradient: false, delete: true, move: false, tilt: false });
   const [glbRotation, setGlbRotation]         = useState([0, 0, 0]);
   const [frontConfirmed, setFrontConfirmed]   = useState(false);
@@ -556,6 +563,22 @@ export default function AddElement() {
         // Hero side-hug size = this fraction of the tier wall height (designer derives it at
         // render time; r is the stand size only). Blank → designer default (0.7).
         if (hugFill !== '') builtPlacementConfig.hug_fill = parseFloat(hugFill);
+        // Folded sticker (2D image only): split at the spine into two hinged wings. fold (deg) /
+        // spine (0–1) are optional — the designer falls back to its defaults. See spattoo-core
+        // placement.js / PLACEMENT_CONFIG.md.
+        if (assetType === '2D' && foldable) {
+          builtPlacementConfig.foldable = true;
+          if (foldAngle  !== '') builtPlacementConfig.fold  = parseFloat(foldAngle);
+          if (spineSplit !== '') builtPlacementConfig.spine = parseFloat(spineSplit);
+        }
+        // Pixel-recolour region (2D image only) — the companion to the generic "Color changeable"
+        // capability: it tells the designer WHICH pixels the colour picker recolours. GLB recolour
+        // tints the material instead (no descriptor needed). Never element-type aware.
+        if (assetType === '2D' && capabilities.color) {
+          builtPlacementConfig.recolor = recolorMethod === 'blue_gt_green'
+            ? { method: 'blue_gt_green', guard: recolorGuard !== '' ? parseInt(recolorGuard, 10) : 12 }
+            : { method: 'opaque' };
+        }
         // Facing offset is authored in DEGREES (cameraToModelRotation → toDeg). Tag the unit so
         // the designer reads it via facingOffsetRadians instead of mistaking degrees for radians
         // (the ~57× over-spin this used to cause). See spattoo-core placement.js / PLACEMENT_CONFIG.md.
@@ -630,6 +653,11 @@ export default function AddElement() {
       setCanScatter(false);
       setSideProud(false);
       setHugFill('');
+      setFoldable(false);
+      setFoldAngle('');
+      setSpineSplit('');
+      setRecolorMethod('opaque');
+      setRecolorGuard('12');
       setCapabilities({ resize: true, duplicate: true, color: false, delete: true, move: false, tilt: false });
       setPipingBottomFlip(true);
       setCraftRecs([]);
@@ -1011,6 +1039,27 @@ export default function AddElement() {
                     <input type="number" min="0.1" max="1" step="0.05" style={{ ...s.input, flex: 1 }} value={hugFill} placeholder="0.7 — fraction of wall height (blank = default)" onChange={e => setHugFill(e.target.value)} />
                   </div>
                 )}
+                {assetType === '2D' && (
+                  <>
+                    <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}
+                      title="Splits the image down the middle into two wings that hinge up into a shallow V — a folded card decal (e.g. a butterfly).">
+                      <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={foldable} onChange={e => setFoldable(e.target.checked)} />
+                      <div>
+                        <div style={s.checkLabel}>Folded decal (two hinged wings)</div>
+                        <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                          Splits the image at the spine into two wings that fold up into a shallow V — for folded card decals like a butterfly. Use an upright, roughly symmetric image.
+                        </div>
+                      </div>
+                    </label>
+                    {foldable && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Fold / spine</span>
+                        <input type="number" min="0" max="75" step="1" style={{ ...s.input, flex: 1 }} value={foldAngle} placeholder="fold° — e.g. 32 (blank = 30)" onChange={e => setFoldAngle(e.target.value)} />
+                        <input type="number" min="0.35" max="0.65" step="0.01" style={{ ...s.input, flex: 1 }} value={spineSplit} placeholder="spine — e.g. 0.5" onChange={e => setSpineSplit(e.target.value)} />
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -1038,7 +1087,7 @@ export default function AddElement() {
               {[
                 { key: 'resize',    label: 'Resizable',        hint: '＋/− size buttons in edit strip' },
                 { key: 'duplicate', label: 'Duplicatable',     hint: 'Copy button creates another instance with same size and color' },
-                { key: 'color',     label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
+                { key: 'color',     label: 'Color changeable', hint: 'Color picker in the designer — tints a GLB material, or recolours a 2D image (choose the area below)' },
                 { key: 'gradient',  label: 'Gradient colors',  hint: 'Customer can blend up to 3 colors (swirl / vertical / linear) — for swirls & ombré (GLB only)' },
                 { key: 'delete',    label: 'Deletable',        hint: 'Remove button shown when selected' },
                 { key: 'move',      label: 'Movable',          hint: 'Nudge ◀▶▲▼ position on the cake' },
@@ -1058,6 +1107,26 @@ export default function AddElement() {
                 </label>
               ))}
             </div>
+            {/* Which pixels of a 2D image the colour picker recolours. Generic (not asset-specific):
+                appears only when this element is colour-changeable AND the asset is a 2D image. */}
+            {capabilities.color && assetType === '2D' && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px dashed #C5D4C8' }}>
+                <label style={{ ...s.label, marginBottom: 4 }}>Recolourable area</label>
+                <select style={s.select} value={recolorMethod} onChange={e => setRecolorMethod(e.target.value)}>
+                  <option value="opaque">Whole image — recolour every pixel (solid stickers)</option>
+                  <option value="blue_gt_green">Coloured fill, keep gold/white outline (outlined decals)</option>
+                </select>
+                {recolorMethod === 'blue_gt_green' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Edge protect</span>
+                    <input type="number" min="0" max="50" step="1" style={{ ...s.input, flex: 1 }} value={recolorGuard} placeholder="12 — raise if colour bleeds into the outline" onChange={e => setRecolorGuard(e.target.value)} />
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 6, lineHeight: 1.5 }}>
+                  The picker keeps each pixel's brightness (shading survives). <b>Whole image</b> suits a single-fill sticker; <b>Coloured fill</b> recolours only the blue-dominant fill and leaves gold/white lines — for outlined decals. Multi-colour artwork isn't a fit: leave colour-changeable off.
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Baker craft guide (X-Ray) — required for cream piping elements */}

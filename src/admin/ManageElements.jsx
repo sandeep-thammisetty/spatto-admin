@@ -463,6 +463,12 @@ export default function ManageElements() {
   const [sideProud,          setSideProud]          = useState(false);
   const [useFondant,         setUseFondant]         = useState(false);   // placement_config.useSharedFondantTexture
   const [hugFill,            setHugFill]            = useState('');
+  // Folded sticker (2D) + pixel-recolour region — config-driven capabilities (see spattoo-core).
+  const [foldable,      setFoldable]      = useState(false);
+  const [foldAngle,     setFoldAngle]     = useState('');
+  const [spineSplit,    setSpineSplit]    = useState('');
+  const [recolorMethod, setRecolorMethod] = useState('opaque');
+  const [recolorGuard,  setRecolorGuard]  = useState('12');
   const [patternOnly,        setPatternOnly]        = useState(false);
   const [description,      setDescription]      = useState('');
   const [glbRotation,        setGlbRotation]        = useState([0, 0, 0]);
@@ -535,6 +541,11 @@ export default function ManageElements() {
     setCanScatter(pc.scatter === true);
     setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
+    setFoldable(pc.foldable === true);
+    setFoldAngle(pc.fold != null ? String(pc.fold) : '');
+    setSpineSplit(pc.spine != null ? String(pc.spine) : '');
+    setRecolorMethod(pc.recolor?.method ?? 'opaque');
+    setRecolorGuard(pc.recolor?.guard != null ? String(pc.recolor.guard) : '12');
     setPatternOnly(pc.pattern_only === true);
     setGlbEnvPreset('none');
     setGlbRotation(rotationToDegrees(pc));   // degrees for the UI; converts legacy radians rows
@@ -607,6 +618,11 @@ export default function ManageElements() {
     setCanScatter(pc.scatter === true);
     setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
+    setFoldable(pc.foldable === true);
+    setFoldAngle(pc.fold != null ? String(pc.fold) : '');
+    setSpineSplit(pc.spine != null ? String(pc.spine) : '');
+    setRecolorMethod(pc.recolor?.method ?? 'opaque');
+    setRecolorGuard(pc.recolor?.guard != null ? String(pc.recolor.guard) : '12');
     setPatternOnly(pc.pattern_only === true);
     // Keep glbRotation in lockstep with the JSON. handleSave rewrites rotation from glbRotation,
     // so without this an edit to `rotation` in the textarea is silently reverted on save. UI unit
@@ -1414,7 +1430,7 @@ export default function ManageElements() {
                     {[
                       { key: 'resize',    label: 'Resizable',        hint: '+/− size buttons in edit strip' },
                       { key: 'duplicate', label: 'Duplicatable',     hint: 'Copy button creates another instance' },
-                      { key: 'color',     label: 'Color changeable', hint: 'Color picker in designer (GLB only)' },
+                      { key: 'color',     label: 'Color changeable', hint: 'Color picker in the designer — tints a GLB material, or recolours a 2D image (choose the area below)' },
                       { key: 'gradient',  label: 'Gradient colors',  hint: 'Customer can blend up to 3 colors (swirl / vertical / linear) — for swirls & ombré (GLB only)' },
                       { key: 'delete',    label: 'Deletable',        hint: 'Remove button shown when selected' },
                       { key: 'move',      label: 'Movable',          hint: 'Nudge ◀▶▲▼ position on the cake' },
@@ -1423,7 +1439,19 @@ export default function ManageElements() {
                       <label key={key} style={{ ...s.checkRow, alignItems: 'flex-start', cursor: 'pointer' }}>
                         <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }}
                           checked={capabilities[key] ?? false}
-                          onChange={e => setCapabilities(c => ({ ...c, [key]: e.target.checked }))} />
+                          onChange={e => {
+                            const checked = e.target.checked;
+                            setCapabilities(c => ({ ...c, [key]: checked }));
+                            // A colour-changeable 2D image needs a recolour region descriptor (which
+                            // pixels). Write the default on enable, remove it on disable.
+                            if (key === 'color' && selectedEl?.image_url && !isGlb) {
+                              patchPc({ recolor: checked
+                                ? (recolorMethod === 'blue_gt_green'
+                                    ? { method: 'blue_gt_green', guard: recolorGuard !== '' ? parseInt(recolorGuard, 10) : 12 }
+                                    : { method: 'opaque' })
+                                : '' });
+                            }
+                          }} />
                         <div>
                           <div style={s.checkLabel}>{label}</div>
                           <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>{hint}</div>
@@ -1431,6 +1459,30 @@ export default function ManageElements() {
                       </label>
                     ))}
                   </div>
+                  {/* Recolourable area — generic; appears only when colour-changeable AND a 2D image. */}
+                  {capabilities.color && selectedEl?.image_url && !isGlb && (
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px dashed #C5D4C8' }}>
+                      <label style={{ ...s.label, marginBottom: 4 }}>Recolourable area</label>
+                      <select style={s.select} value={recolorMethod}
+                        onChange={e => { const m = e.target.value; setRecolorMethod(m);
+                          patchPc({ recolor: m === 'blue_gt_green' ? { method: 'blue_gt_green', guard: recolorGuard !== '' ? parseInt(recolorGuard, 10) : 12 } : { method: 'opaque' } }); }}>
+                        <option value="opaque">Whole image — recolour every pixel (solid stickers)</option>
+                        <option value="blue_gt_green">Coloured fill, keep gold/white outline (outlined decals)</option>
+                      </select>
+                      {recolorMethod === 'blue_gt_green' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Edge protect</span>
+                          <input type="number" min="0" max="50" step="1" style={{ ...s.input, flex: 1 }} value={recolorGuard}
+                            placeholder="12 — raise if colour bleeds into the outline"
+                            onChange={e => { const g = e.target.value; setRecolorGuard(g);
+                              patchPc({ recolor: { method: 'blue_gt_green', guard: g !== '' ? parseInt(g, 10) : 12 } }); }} />
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 6, lineHeight: 1.5 }}>
+                        Which pixels the colour picker recolours (brightness preserved). <b>Whole image</b> for a single-fill sticker; <b>Coloured fill</b> keeps gold/white outlines. Multi-colour artwork isn't a fit — leave colour-changeable off.
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Default color ── */}
@@ -1624,6 +1676,32 @@ export default function ManageElements() {
                             placeholder="0.7 — fraction of wall height (blank = default)"
                             onChange={e => { setHugFill(e.target.value); patchPc({ hug_fill: numPatch(e.target.value) }); }} />
                         </div>
+                      )}
+                      {selectedEl?.image_url && !isGlb && (
+                        <>
+                          <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}>
+                            <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={foldable}
+                              onChange={e => { const on = e.target.checked; setFoldable(on);
+                                patchPc(on ? { foldable: true } : { foldable: '', fold: '', spine: '' }); }} />
+                            <div>
+                              <div style={s.checkLabel}>Folded decal (two hinged wings)</div>
+                              <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                                Splits the image at the spine into two wings that fold up into a shallow V — for folded card decals like a butterfly. Upright, roughly symmetric image.
+                              </div>
+                            </div>
+                          </label>
+                          {foldable && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Fold / spine</span>
+                              <input type="number" min="0" max="75" step="1" style={{ ...s.input, flex: 1 }} value={foldAngle}
+                                placeholder="fold° — e.g. 32 (blank = 30)"
+                                onChange={e => { setFoldAngle(e.target.value); patchPc({ fold: numPatch(e.target.value) }); }} />
+                              <input type="number" min="0.35" max="0.65" step="0.01" style={{ ...s.input, flex: 1 }} value={spineSplit}
+                                placeholder="spine — e.g. 0.5"
+                                onChange={e => { setSpineSplit(e.target.value); patchPc({ spine: numPatch(e.target.value) }); }} />
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
