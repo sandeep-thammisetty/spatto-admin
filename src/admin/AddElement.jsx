@@ -261,6 +261,14 @@ export default function AddElement() {
   const [canScatter,     setCanScatter]       = useState(false);
   const [sideProud,      setSideProud]        = useState(false);
   const [hugFill,        setHugFill]          = useState('');
+  // Packed ball cluster (placement_config.cluster). A cluster element drops as a single ball the
+  // customer can grow into a packed clump; these author the defaults. sizes = [largest, 2nd, 3rd,
+  // small] relative multipliers; palette = default mix colours (the customer can override).
+  const [canCluster,     setCanCluster]       = useState(false);
+  const [clusterMin,     setClusterMin]       = useState('');   // default 3
+  const [clusterMax,     setClusterMax]       = useState('');   // default 30
+  const [clusterSizes,   setClusterSizes]     = useState('1.6, 1.35, 0.85, 0.5');
+  const [clusterPalette, setClusterPalette]   = useState('');   // comma hex; blank = element colour / gold
   // Verge (rests on the rim lip, reclines radially outward over the edge). Calibration mirrors
   // perch's placement_config.perch object — written when any zone uses the `verge` mode.
   const [vergeSeat,      setVergeSeat]        = useState('center'); // placement_config.verge.seat: center | base
@@ -540,11 +548,22 @@ export default function AddElement() {
         if (placementScaleMax !== '')  scaleBounds.max  = parseFloat(placementScaleMax);
         if (placementScaleStep !== '') scaleBounds.step = parseFloat(placementScaleStep);
         if (Object.keys(scaleBounds).length) builtPlacementConfig.scale = scaleBounds;
-        // Placement STYLE: hero (one per tier×surface) vs. free scatter. Config-driven, never
-        // inferred from element type — see spattoo-core INVARIANTS.md rule #4.
-        if (effectiveCanScatter) builtPlacementConfig.scatter = true;        // sprinkles: density-driven, packed
-        else if (singlePerSlot) builtPlacementConfig.single_per_slot = true;  // mutually exclusive with scatter
-        // Side seating: default flush (true hug); proud = stands off the wall (deep toppers).
+        // Placement STYLE: packed cluster vs. hero (one per tier×surface) vs. free scatter. Config-
+        // driven, never inferred from element type — see spattoo-core INVARIANTS.md rule #4. The three
+        // are mutually exclusive; cluster takes priority.
+        if (canCluster) {                                                     // packed faux-ball clump
+          const cluster = {};
+          if (clusterMin !== '') cluster.min = parseInt(clusterMin, 10);
+          if (clusterMax !== '') cluster.max = parseInt(clusterMax, 10);
+          const sizes = clusterSizes.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n) && n > 0);
+          if (sizes.length) cluster.sizes = sizes;
+          const palette = clusterPalette.split(',').map(s => s.trim()).filter(Boolean);
+          if (palette.length) cluster.palette = palette;
+          builtPlacementConfig.cluster = cluster;
+        } else if (effectiveCanScatter) builtPlacementConfig.scatter = true;  // sprinkles: density-driven, packed
+        else if (singlePerSlot) builtPlacementConfig.single_per_slot = true;  // hero
+        // Side seating: default flush (true hug); proud = stands off the wall (deep toppers). A cluster
+        // ball is a sphere — the designer forces it proud on the side regardless of this flag.
         if (sideProud) builtPlacementConfig.side_proud = true;
         // Hero side-hug size = this fraction of the tier wall height (designer derives it at
         // render time; r is the stand size only). Blank → designer default (0.7).
@@ -648,6 +667,11 @@ export default function AddElement() {
       setSinglePerSlot(false);
       setCanScatter(false);
       setSideProud(false);
+      setCanCluster(false);
+      setClusterMin('');
+      setClusterMax('');
+      setClusterSizes('1.6, 1.35, 0.85, 0.5');
+      setClusterPalette('');
       setHugFill('');
       setFoldable(false);
       setFoldAngle('');
@@ -948,15 +972,45 @@ export default function AddElement() {
                 <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
                   Limits how far users can resize this element in the designer (e.g. sprinkles stay small): min, max, and the step increment per notch on the size control. All optional — blank uses the designer defaults. Keep the default scale (r) within this range, and pick a step that divides max−min evenly.
                 </div>
-                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}>
-                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={effectiveCanScatter} disabled={isScatterType} onChange={e => setCanScatter(e.target.checked)} />
+                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4, opacity: canCluster ? 0.45 : 1 }}>
+                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={effectiveCanScatter} disabled={isScatterType || canCluster} onChange={e => setCanScatter(e.target.checked)} />
                   <div>
                     <div style={s.checkLabel}>Can scatter (density){isScatterType ? ' — inherent to this type' : ''}</div>
                     <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
-                      Many packed instances controlled by a density slider in the designer (sprinkles, pearls). For discrete decor, leave off and let users duplicate by hand. Mutually exclusive with single-per-slot.
+                      Many packed instances controlled by a density slider in the designer (sprinkles, pearls). For discrete decor, leave off and let users duplicate by hand. Mutually exclusive with single-per-slot and cluster.
                     </div>
                   </div>
                 </label>
+                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4, opacity: (effectiveCanScatter || singlePerSlot) ? 0.45 : 1 }}
+                  title="A packed clump of mixed-size balls. Drops as a single ball the customer grows into a cluster; mixed colours from a palette.">
+                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={canCluster} disabled={effectiveCanScatter || singlePerSlot} onChange={e => setCanCluster(e.target.checked)} />
+                  <div>
+                    <div style={s.checkLabel}>Can cluster (packed balls)</div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                      Drops as a single ball the customer can grow into a packed, mixed-size clump (faux pearls/balls) that clings top→rim→side. Multiple clusters per cake. Mutually exclusive with scatter and single-per-slot.
+                    </div>
+                  </div>
+                </label>
+                {canCluster && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4, padding: '8px 10px', background: '#F7FAF8', borderRadius: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 110 }}>Ball count</span>
+                      <input type="number" min="1" step="1" style={{ ...s.input, flex: 1 }} value={clusterMin} placeholder="min (blank = 3)" onChange={e => setClusterMin(e.target.value)} />
+                      <input type="number" min="1" step="1" style={{ ...s.input, flex: 1 }} value={clusterMax} placeholder="max (blank = 30)" onChange={e => setClusterMax(e.target.value)} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 110 }}>Size tiers</span>
+                      <input type="text" style={{ ...s.input, flex: 1 }} value={clusterSizes} placeholder="largest, 2nd, 3rd, small — e.g. 1.6, 1.35, 0.85, 0.5" onChange={e => setClusterSizes(e.target.value)} />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 110 }}>Default colours</span>
+                      <input type="text" style={{ ...s.input, flex: 1 }} value={clusterPalette} placeholder="comma hex — e.g. #D4AF37, #E8C66B (blank = element colour / gold)" onChange={e => setClusterPalette(e.target.value)} />
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6B8C74' }}>
+                      Size tiers are relative multipliers (1 = the GLB's natural size), biggest → smallest. The customer controls the size slider and can recolour the mix in the designer; these are just the defaults.
+                    </div>
+                  </div>
+                )}
                 <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}
                   title="Off = lies flat against the side (hugs the wall). On = raised off the wall — for deep 3D pieces that look half-buried when flattened.">
                   <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={sideProud} onChange={e => setSideProud(e.target.checked)} />
@@ -967,8 +1021,8 @@ export default function AddElement() {
                     </div>
                   </div>
                 </label>
-                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4, opacity: effectiveCanScatter ? 0.45 : 1 }}>
-                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={singlePerSlot} disabled={effectiveCanScatter} onChange={e => setSinglePerSlot(e.target.checked)} />
+                <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4, opacity: (effectiveCanScatter || canCluster) ? 0.45 : 1 }}>
+                  <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={singlePerSlot} disabled={effectiveCanScatter || canCluster} onChange={e => setSinglePerSlot(e.target.checked)} />
                   <div>
                     <div style={s.checkLabel}>Single per slot (hero element)</div>
                     <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
