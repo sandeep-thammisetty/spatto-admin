@@ -24,6 +24,7 @@ const PLACEMENT_MODES = [
   { value: 'hug',             label: 'hug (default)' },   // explicit — saved as "hug", not omitted
   { value: 'stand',           label: 'stand' },
   { value: 'perch',           label: 'perch (sit on edge)' },  // figure seated on the rim, legs over
+  { value: 'verge',           label: 'verge (lean over edge)' }, // rests on the rim lip, reclines outward
   { value: 'faux_ball_single',label: 'faux ball single' },
 ];
 
@@ -281,6 +282,12 @@ export default function AddElement() {
   const [canScatter,     setCanScatter]       = useState(false);
   const [sideProud,      setSideProud]        = useState(false);
   const [hugFill,        setHugFill]          = useState('');
+  // Verge (rests on the rim lip, reclines radially outward over the edge). Calibration mirrors
+  // perch's placement_config.perch object — written when any zone uses the `verge` mode.
+  const [vergeSeat,      setVergeSeat]        = useState('center'); // placement_config.verge.seat: center | base
+  const [vergeAngle,     setVergeAngle]       = useState('');   // placement_config.verge.angle_deg (blank = default 35)
+  const [vergeYOffset,   setVergeYOffset]     = useState('');   // placement_config.verge.y_offset (blank = 0)
+  const [vergeEdgeInset, setVergeEdgeInset]   = useState('');   // placement_config.verge.edge_inset (blank = 0)
   // Folded sticker (2D only): a flat decal splits at the body spine into two hinged wings.
   const [foldable,   setFoldable]   = useState(false);
   const [foldAngle,  setFoldAngle]  = useState('');   // placement_config.fold (deg, blank = default 30)
@@ -564,6 +571,17 @@ export default function AddElement() {
         // Hero side-hug size = this fraction of the tier wall height (designer derives it at
         // render time; r is the stand size only). Blank → designer default (0.7).
         if (hugFill !== '') builtPlacementConfig.hug_fill = parseFloat(hugFill);
+        // Verge calibration (rests on the rim lip, reclines outward) — written whenever any zone uses
+        // the `verge` mode. Mirrors the perch object: only non-blank fields are set; the designer
+        // falls back to angle_deg 35 / 0 offsets. See spattoo-core PLACEMENT_CONFIG.md.
+        if (applicableZones.some(zone => builtPlacementConfig[zone] === 'verge')) {
+          const verge = {};
+          if (vergeSeat === 'base') verge.seat = 'base';   // default 'center' omitted (the renderer default)
+          if (vergeAngle     !== '') verge.angle_deg  = parseFloat(vergeAngle);
+          if (vergeYOffset   !== '') verge.y_offset   = parseFloat(vergeYOffset);
+          if (vergeEdgeInset !== '') verge.edge_inset = parseFloat(vergeEdgeInset);
+          builtPlacementConfig.verge = verge;
+        }
         // Folded sticker (2D image only): split at the spine into two hinged wings. fold (deg) /
         // spine (0–1) are optional — the designer falls back to its defaults. See spattoo-core
         // placement.js / PLACEMENT_CONFIG.md.
@@ -1041,6 +1059,26 @@ export default function AddElement() {
                     <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Side hug fill</span>
                     <input type="number" min="0.1" max="1" step="0.05" style={{ ...s.input, flex: 1 }} value={hugFill} placeholder="0.7 — fraction of wall height (blank = default)" onChange={e => setHugFill(e.target.value)} />
                   </div>
+                )}
+                {applicableZones.some(zone => (placementConfig[zone] ?? 'hug') === 'verge') && (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Verge seat</span>
+                      <select style={{ ...s.select, flex: 1 }} value={vergeSeat} onChange={e => setVergeSeat(e.target.value)}>
+                        <option value="center">center — mid-spine rests on the rim edge (drapes over the lip)</option>
+                        <option value="base">base — body base sits on the top surface, leans from there</option>
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Verge lean</span>
+                      <input type="number" min="0" max="69" step="1" style={{ ...s.input, flex: 1 }} value={vergeAngle} placeholder="angle° — e.g. 35 (blank = default)" onChange={e => setVergeAngle(e.target.value)} />
+                      <input type="number" step="0.01" style={{ ...s.input, flex: 1 }} value={vergeYOffset} placeholder="height — e.g. 0" onChange={e => setVergeYOffset(e.target.value)} />
+                      <input type="number" step="0.01" style={{ ...s.input, flex: 1 }} value={vergeEdgeInset} placeholder="edge inset — e.g. 0" onChange={e => setVergeEdgeInset(e.target.value)} />
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                      Verge reclines the element radially outward over the rim edge (butterflies, flowers). Seat = center (mid-spine rests on the lip, body drapes over) or base (body base on the top surface). Lean angle in degrees (blank = 35) is the default Tilt, plus an optional height nudge and edge inset (+ pulls in from the rim, − pushes out over it). All optional.
+                    </div>
+                  </>
                 )}
                 {assetType === '2D' && (
                   <>

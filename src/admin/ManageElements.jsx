@@ -23,6 +23,7 @@ const PLACEMENT_MODES = [
   { value: 'hug',              label: 'hug (default)' },   // explicit — saved as "hug", not omitted
   { value: 'stand',            label: 'stand' },
   { value: 'perch',            label: 'perch (sit on edge)' },  // figure seated on the rim, legs over
+  { value: 'verge',            label: 'verge (lean over edge)' }, // rests on the rim lip, reclines outward
   { value: 'faux_ball_single', label: 'faux ball single' },
   { value: 'faux_balls',       label: 'faux balls' },
 ];
@@ -463,6 +464,11 @@ export default function ManageElements() {
   const [sideProud,          setSideProud]          = useState(false);
   const [useFondant,         setUseFondant]         = useState(false);   // placement_config.useSharedFondantTexture
   const [hugFill,            setHugFill]            = useState('');
+  // Verge (rests on the rim lip, reclines outward over the edge) — placement_config.verge object.
+  const [vergeSeat,      setVergeSeat]      = useState('center'); // verge.seat: center | base
+  const [vergeAngle,     setVergeAngle]     = useState('');   // verge.angle_deg (blank = default 35)
+  const [vergeYOffset,   setVergeYOffset]   = useState('');   // verge.y_offset (blank = 0)
+  const [vergeEdgeInset, setVergeEdgeInset] = useState('');   // verge.edge_inset (blank = 0)
   // Folded sticker (2D) + pixel-recolour region — config-driven capabilities (see spattoo-core).
   const [foldable,      setFoldable]      = useState(false);
   const [foldAngle,     setFoldAngle]     = useState('');
@@ -542,6 +548,10 @@ export default function ManageElements() {
     setCanScatter(pc.scatter === true);
     setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
+    setVergeSeat(pc.verge?.seat === 'base' ? 'base' : 'center');
+    setVergeAngle(pc.verge?.angle_deg != null ? String(pc.verge.angle_deg) : '');
+    setVergeYOffset(pc.verge?.y_offset != null ? String(pc.verge.y_offset) : '');
+    setVergeEdgeInset(pc.verge?.edge_inset != null ? String(pc.verge.edge_inset) : '');
     setFoldable(pc.foldable === true);
     setFoldAngle(pc.fold != null ? String(pc.fold) : '');
     setSpineSplit(pc.spine != null ? String(pc.spine) : '');
@@ -620,6 +630,10 @@ export default function ManageElements() {
     setCanScatter(pc.scatter === true);
     setSideProud(pc.side_proud === true);
     setHugFill(pc.hug_fill != null ? String(pc.hug_fill) : '');
+    setVergeSeat(pc.verge?.seat === 'base' ? 'base' : 'center');
+    setVergeAngle(pc.verge?.angle_deg != null ? String(pc.verge.angle_deg) : '');
+    setVergeYOffset(pc.verge?.y_offset != null ? String(pc.verge.y_offset) : '');
+    setVergeEdgeInset(pc.verge?.edge_inset != null ? String(pc.verge.edge_inset) : '');
     setFoldable(pc.foldable === true);
     setFoldAngle(pc.fold != null ? String(pc.fold) : '');
     setSpineSplit(pc.spine != null ? String(pc.spine) : '');
@@ -643,6 +657,16 @@ export default function ManageElements() {
     m === 'blue_gt_green' ? { method: 'blue_gt_green', guard: g !== '' ? parseInt(g, 10) : 12 }
     : m === 'saturated'   ? { method: 'saturated', sat: sv !== '' ? parseFloat(sv) : 0.25 }
     : { method: 'opaque' };
+  // The verge descriptor (rests on the rim lip, reclines outward) — only non-blank fields; all blank
+  // → '' so patchPc drops the key and the designer uses its defaults (angle_deg 35 / 0 offsets).
+  const vergeDesc = (seat = vergeSeat, a = vergeAngle, y = vergeYOffset, ei = vergeEdgeInset) => {
+    const v = {};
+    if (seat === 'base') v.seat = 'base';   // default 'center' omitted (the renderer default)
+    if (a  !== '') v.angle_deg  = parseFloat(a);
+    if (y  !== '') v.y_offset   = parseFloat(y);
+    if (ei !== '') v.edge_inset = parseFloat(ei);
+    return Object.keys(v).length ? v : '';
+  };
   // Build the placement_config.scale patch from the min/max inputs: an object with only the set
   // keys, or '' so patchPc removes `scale` entirely when all are blank. The sibling fields' current
   // strings are passed through so editing one (min/max/step) keeps the others.
@@ -1688,6 +1712,33 @@ export default function ManageElements() {
                             placeholder="0.7 — fraction of wall height (blank = default)"
                             onChange={e => { setHugFill(e.target.value); patchPc({ hug_fill: numPatch(e.target.value) }); }} />
                         </div>
+                      )}
+                      {applicableZones.some(z => (placementZoneConfig[z] ?? 'hug') === 'verge') && (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Verge seat</span>
+                            <select style={{ ...s.select, flex: 1 }} value={vergeSeat}
+                              onChange={e => { setVergeSeat(e.target.value); patchPc({ verge: vergeDesc(e.target.value) }); }}>
+                              <option value="center">center — mid-spine rests on the rim edge (drapes over the lip)</option>
+                              <option value="base">base — body base sits on the top surface, leans from there</option>
+                            </select>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Verge lean</span>
+                            <input type="number" min="0" max="69" step="1" style={{ ...s.input, flex: 1 }} value={vergeAngle}
+                              placeholder="angle° — e.g. 35 (blank = default)"
+                              onChange={e => { setVergeAngle(e.target.value); patchPc({ verge: vergeDesc(vergeSeat, e.target.value) }); }} />
+                            <input type="number" step="0.01" style={{ ...s.input, flex: 1 }} value={vergeYOffset}
+                              placeholder="height — e.g. 0"
+                              onChange={e => { setVergeYOffset(e.target.value); patchPc({ verge: vergeDesc(vergeSeat, vergeAngle, e.target.value) }); }} />
+                            <input type="number" step="0.01" style={{ ...s.input, flex: 1 }} value={vergeEdgeInset}
+                              placeholder="edge inset — e.g. 0"
+                              onChange={e => { setVergeEdgeInset(e.target.value); patchPc({ verge: vergeDesc(vergeSeat, vergeAngle, vergeYOffset, e.target.value) }); }} />
+                          </div>
+                          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                            Verge reclines radially outward over the rim (butterflies, flowers). Seat = center (mid-spine on the lip, body drapes over) or base (body base on the top). Lean angle° (blank = 35) is the default Tilt, plus an optional height nudge and edge inset (+ pulls in, − pushes out over the lip).
+                          </div>
+                        </>
                       )}
                       {selectedEl?.image_url && !isGlb && (
                         <>
