@@ -180,6 +180,17 @@ export default function PhotoFrameStudio() {
         Optionally add a <b>decorative overlay</b> for fancy frames (glitter, piped cream).
       </p>
 
+      <div style={s.specBox}>
+        <div style={s.specTitle}>Asset specs — read before uploading</div>
+        <ul style={s.specList}>
+          <li><b>All images:</b> <b>square PNG</b>, recommended <b>1024 × 1024</b> (larger is fine), RGBA with a real <b>transparent</b> background — not white.</li>
+          <li><b>Frame shape (mask):</b> a <b>white silhouette</b> of the photo window on transparent, <b>centred</b>. White = where the photo shows; transparent = outside. This one shape also sets the border's shape.</li>
+          <li><b>Decorative overlay:</b> <b>same size &amp; alignment</b> as the mask, with a <b>transparent window</b> that lines up with the mask's white area (so the photo shows through). Keep the border art opaque and let it overlap the window edge slightly to hide the seam. Leave a little transparent margin around the art so it isn't clipped.</li>
+          <li><b>Sample photo:</b> any JPG/PNG — only used to preview the look and fill the thumbnail; not stored on the element.</li>
+          <li><b>Tip:</b> author the mask and overlay on the <b>same canvas</b> so the window registers exactly; mis-alignment shows as the photo peeking past the frame.</li>
+        </ul>
+      </div>
+
       <div style={s.grid}>
         <div style={s.col}>
           <label style={s.label}>Name</label>
@@ -229,7 +240,10 @@ export default function PhotoFrameStudio() {
 const s = {
   page:   { maxWidth: 960, margin: '0 auto', padding: '24px 20px 64px', fontFamily: "'Quicksand', sans-serif" },
   h1:     { fontSize: 22, fontWeight: 800, color: '#2C4433', margin: '0 0 6px' },
-  sub:    { fontSize: 13, color: '#5C7565', lineHeight: 1.6, margin: '0 0 20px' },
+  sub:    { fontSize: 13, color: '#5C7565', lineHeight: 1.6, margin: '0 0 16px' },
+  specBox:  { marginBottom: 22, padding: '12px 16px', borderRadius: 10, background: '#FBF7EF', border: '1px solid #E6D9BE' },
+  specTitle:{ fontSize: 11, fontWeight: 800, color: '#7A5E1F', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 6 },
+  specList: { margin: 0, paddingLeft: 18, fontSize: 12, color: '#5b5340', lineHeight: 1.7 },
   grid:   { display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' },
   col:    { flex: '1 1 360px', minWidth: 320, display: 'flex', flexDirection: 'column' },
   label:  { fontSize: 12, fontWeight: 700, color: '#2C4433', margin: '12px 0 4px' },
