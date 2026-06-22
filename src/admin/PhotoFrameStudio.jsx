@@ -97,6 +97,7 @@ export default function PhotoFrameStudio() {
   const [maskFile, setMaskFile]         = useState(null);   // shape (required)
   const [overlayFile, setOverlayFile]   = useState(null);   // decorative border art (optional, on cake)
   const [sampleFile, setSampleFile]     = useState(null);   // sample photo (preview + auto-thumbnail)
+  const [frameShape, setFrameShape]     = useState('round'); // photo.shape — controls the top fit-to-rim max size
   const [borderColor, setBorderColor]   = useState('#ffffff');
   const [maskImg, setMaskImg]           = useState(null);
   const [overlayImg, setOverlayImg]     = useState(null);
@@ -143,7 +144,7 @@ export default function PhotoFrameStudio() {
       const blob = await new Promise(res => composite(512, sampleImg, maskImg, overlayImg, borderColor, DEFAULT_BORDER_WIDTH).toBlob(res, 'image/png'));
       const thumbKey = await uploadOne('elements/thumbnails', new File([blob], 'thumb.png', { type: 'image/png' }), 'image/png');
 
-      const photo = { mask: maskKey, border: { width: DEFAULT_BORDER_WIDTH } };
+      const photo = { mask: maskKey, shape: frameShape, border: { width: DEFAULT_BORDER_WIDTH } };
       if (overlayKey) photo.overlay = overlayKey;
 
       await createGlobalElement({
@@ -184,7 +185,7 @@ export default function PhotoFrameStudio() {
         <div style={s.specTitle}>Asset specs — read before uploading</div>
         <ul style={s.specList}>
           <li><b>All images:</b> <b>square PNG</b>, recommended <b>1024 × 1024</b> (larger is fine), RGBA with a real <b>transparent</b> background — not white.</li>
-          <li><b>Frame shape (mask):</b> a <b>white silhouette</b> of the photo window on transparent, <b>centred</b>. White = where the photo shows; transparent = outside. This one shape also sets the border's shape.</li>
+          <li><b>Frame shape (mask):</b> a <b>white silhouette</b> of the photo window on transparent, <b>centred</b>, and <b>filling the canvas</b> (only a small transparent margin) so it can grow to the cake's rim. White = where the photo shows; transparent = outside. This one shape also sets the border's shape.</li>
           <li><b>Decorative overlay:</b> <b>same size &amp; alignment</b> as the mask, with a <b>transparent window</b> that lines up with the mask's white area (so the photo shows through). Keep the border art opaque and let it overlap the window edge slightly to hide the seam. Leave a little transparent margin around the art so it isn't clipped.</li>
           <li><b>Sample photo:</b> any JPG/PNG — only used to preview the look and fill the thumbnail; not stored on the element.</li>
           <li><b>Tip:</b> author the mask and overlay on the <b>same canvas</b> so the window registers exactly; mis-alignment shows as the photo peeking past the frame.</li>
@@ -201,6 +202,16 @@ export default function PhotoFrameStudio() {
             <option value="">Select type…</option>
             {elementTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
+
+          <label style={s.label}>Frame shape</label>
+          <select style={s.select} value={frameShape} onChange={e => setFrameShape(e.target.value)}>
+            <option value="round">Round (circle / oval)</option>
+            <option value="rect">Rectangle / square</option>
+            <option value="other">Other (heart, star…)</option>
+          </select>
+          <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 2 }}>
+            Used for the on-cake size limit: a round frame fills a round cake to the rim, a rectangle fills a rectangular cake to the edges; others stay inside the top.
+          </div>
 
           <Drop label="Frame shape — window mask (PNG: white window on transparent)" hint="Required. The photo's shape + the border's shape. → image_url / placement_config.photo.mask" accept="image/png" file={maskFile} onChange={setMaskFile} />
           <Drop label="Decorative overlay (PNG, optional)" hint="Fancy border art (glitter, piping) drawn on the cake. If set, it replaces the procedural border. → placement_config.photo.overlay" accept="image/*" file={overlayFile} onChange={setOverlayFile} />
