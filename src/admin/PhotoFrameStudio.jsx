@@ -37,6 +37,30 @@ function drawCover(ctx, img, S) {
   ctx.drawImage(img, (S - dw) / 2, (S - dh) / 2, dw, dh);
 }
 
+// Measure how much of the canvas the mask shape actually fills (its half-extent ÷ the canvas half),
+// so the designer can grow a frame until its real edge — not the square plane — reaches the cake rim,
+// regardless of any transparent margin. round → max radius; rect/other → bounding half (max |dx|,|dy|).
+function maskFillFraction(img, shape) {
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  if (!w || !h) return 1;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0);
+  const d = x.getImageData(0, 0, w, h).data;
+  const cx = w / 2, cy = h / 2, half = Math.min(w, h) / 2;
+  let maxR = 0, maxX = 0, maxY = 0;
+  for (let py = 0; py < h; py++) for (let px = 0; px < w; px++) {
+    if (d[(py * w + px) * 4 + 3] > 8) {
+      const dx = Math.abs(px - cx), dy = Math.abs(py - cy);
+      if (shape === 'round') { const r = Math.hypot(dx, dy); if (r > maxR) maxR = r; }
+      else { if (dx > maxX) maxX = dx; if (dy > maxY) maxY = dy; }
+    }
+  }
+  const ext = shape === 'round' ? maxR : Math.max(maxX, maxY);
+  const f = ext / half;
+  return f > 0 ? Math.min(1, f) : 1;
+}
+
 // The mask silhouette filled with one colour (its alpha = the shape).
 function tintedMask(maskImg, S, color) {
   const c = document.createElement('canvas'); c.width = S; c.height = S;
@@ -99,6 +123,7 @@ export default function PhotoFrameStudio() {
   const [sampleFile, setSampleFile]     = useState(null);   // sample photo (preview + auto-thumbnail)
   const [frameShape, setFrameShape]     = useState('round'); // photo.shape — controls the top fit-to-rim max size
   const [borderColor, setBorderColor]   = useState('#ffffff');
+  const [maskFill, setMaskFill]         = useState(1);      // measured shape extent / plane half → exact fit-to-rim
   const [maskImg, setMaskImg]           = useState(null);
   const [overlayImg, setOverlayImg]     = useState(null);
   const [sampleImg, setSampleImg]       = useState(null);
@@ -110,6 +135,7 @@ export default function PhotoFrameStudio() {
   useEffect(() => { if (maskFile)    loadImage(maskFile).then(setMaskImg).catch(() => setMaskImg(null));       else setMaskImg(null); }, [maskFile]);
   useEffect(() => { if (overlayFile) loadImage(overlayFile).then(setOverlayImg).catch(() => setOverlayImg(null)); else setOverlayImg(null); }, [overlayFile]);
   useEffect(() => { if (sampleFile)  loadImage(sampleFile).then(setSampleImg).catch(() => setSampleImg(null)); else setSampleImg(null); }, [sampleFile]);
+  useEffect(() => { setMaskFill(maskImg ? maskFillFraction(maskImg, frameShape) : 1); }, [maskImg, frameShape]);
 
   useEffect(() => {
     const cv = previewRef.current;
@@ -144,7 +170,7 @@ export default function PhotoFrameStudio() {
       const blob = await new Promise(res => composite(512, sampleImg, maskImg, overlayImg, borderColor, DEFAULT_BORDER_WIDTH).toBlob(res, 'image/png'));
       const thumbKey = await uploadOne('elements/thumbnails', new File([blob], 'thumb.png', { type: 'image/png' }), 'image/png');
 
-      const photo = { mask: maskKey, shape: frameShape, border: { width: DEFAULT_BORDER_WIDTH } };
+      const photo = { mask: maskKey, shape: frameShape, fill: +maskFill.toFixed(3), border: { width: DEFAULT_BORDER_WIDTH } };
       if (overlayKey) photo.overlay = overlayKey;
 
       await createGlobalElement({
