@@ -244,6 +244,10 @@ export default function AddElement() {
   const [isParent, setIsParent]           = useState(false);
   const [parentId, setParentId]           = useState('');
   const [assetType, setAssetType]         = useState('2D');
+  // 2D only: run remove.bg on the uploaded image. ON by default (most decals are photographed/solid
+  // and need their background stripped). Turn OFF for assets whose alpha is already authored — e.g. a
+  // photo-frame overlay (border + transparent window) — so the asset is uploaded untouched + un-cropped.
+  const [removeBgEnabled, setRemoveBgEnabled] = useState(true);
   const [elementColor, setElementColor]   = useState('#F0DEB8');
   const [userPickedColor, setUserPickedColor] = useState(false);
   const [glbRoughness, setGlbRoughness]   = useState(0.6);
@@ -279,6 +283,11 @@ export default function AddElement() {
   const [foldable,   setFoldable]   = useState(false);
   const [foldAngle,  setFoldAngle]  = useState('');   // placement_config.fold (deg, blank = default 30)
   const [spineSplit, setSpineSplit] = useState('');   // placement_config.spine (0–1, blank = default 0.5)
+  // Photo-cake frame (2D image only): the asset is the FRAME overlay (border + transparent window);
+  // the mask is the window silhouette (placement_config.photo.mask). The customer uploads their photo
+  // in the designer and it shows through the window. See spattoo-core PLACEMENT_CONFIG.md (photo).
+  const [isPhotoFrame, setIsPhotoFrame] = useState(false);
+  const [maskFile,     setMaskFile]     = useState(null);   // window-shape alpha PNG
   // Pixel-recolour region for a colour-changeable 2D image (companion to allowed_actions.color).
   const [recolorMethod, setRecolorMethod] = useState('opaque');   // 'opaque' | 'saturated' | 'blue_gt_green'
   const [recolorGuard,  setRecolorGuard]  = useState('12');       // blue_gt_green margin
@@ -314,11 +323,12 @@ export default function AddElement() {
       .catch(() => setParentOptions([]));
   }, [elementTypeId, isParent]);
 
-  // For 2D, auto remove-bg from the asset file when selected
+  // For 2D, build the thumbnail from the asset when selected (and re-build if the remove-bg toggle
+  // changes, so the preview reflects the choice).
   useEffect(() => {
     if (assetType !== '2D' || !assetFile) { if (assetType === '2D') setThumbnailBlob(null); return; }
     processRemoveBg(assetFile);
-  }, [assetFile, assetType]);
+  }, [assetFile, assetType, removeBgEnabled]);
 
   function toggleZone(zone) {
     setApplicableZones(prev =>
@@ -392,7 +402,8 @@ export default function AddElement() {
     setRemovingBg(true);
     setThumbnailBlob(null);
     try {
-      const processed   = await removeBg(blob);
+      // Skip remove.bg when disabled (the asset's alpha is already authored, e.g. a photo frame).
+      const processed   = removeBgEnabled ? await removeBg(blob) : blob;
       const normalized  = await normalizeThumbnail(processed);
       setThumbnailBlob(normalized);
     } catch {
@@ -483,6 +494,10 @@ export default function AddElement() {
       setMsg({ ok: false, text: 'A thumbnail is required — upload or capture one below.' });
       return;
     }
+    if (isPhotoFrame && !maskFile) {
+      setMsg({ ok: false, text: 'A window mask is required for a photo frame — upload the window-shape PNG.' });
+      return;
+    }
 
     // Craft guide is mandatory for cream_piping elements — at least one nozzle.
     const cleanCraftRecs = craftRecs
@@ -505,15 +520,21 @@ export default function AddElement() {
 
     try {
       // Asset file upload — skipped for 3D Geometry (procedural, no file)
-      // For 2D, upload the background-removed blob so the canvas renders without a background.
+      // For 2D with remove-bg ON, upload the background-removed + normalized blob (the canvas renders
+      // without a background). With remove-bg OFF, upload the ORIGINAL file untouched + un-cropped —
+      // its authored alpha must survive intact (e.g. a photo-frame overlay that must stay aligned to
+      // its window mask).
+      const raw2D = assetType === '2D' && !removeBgEnabled;
       let assetKey = null;
       let assetSize = null;
       if (needsFile) {
         const folder = ASSET_TYPES.find(a => a.value === assetType).folder;
-        const fileToUpload = assetType === '2D' && thumbnailBlob ? thumbnailBlob : assetFile;
-        const ext = assetType === '2D' ? 'png' : assetFile.name.split('.').pop();
+        const fileToUpload = (assetType === '2D' && removeBgEnabled && thumbnailBlob) ? thumbnailBlob : assetFile;
+        const ext = assetType === '3D' ? assetFile.name.split('.').pop()
+                  : raw2D ? (assetFile.name.split('.').pop() || 'png') : 'png';
         const assetFilename = `${crypto.randomUUID()}.${ext}`;
-        const assetContentType = assetType === '2D' ? 'image/png' : (assetFile.type || 'model/gltf-binary');
+        const assetContentType = assetType === '3D' ? (assetFile.type || 'model/gltf-binary')
+                  : raw2D ? (assetFile.type || 'image/png') : 'image/png';
         const { url: assetUrl, key } = await getSignedUploadUrl(folder, assetFilename, assetContentType);
         await uploadToR2(assetUrl, fileToUpload);
         assetKey = key;
@@ -525,6 +546,16 @@ export default function AddElement() {
       const thumbFilename = `${crypto.randomUUID()}.png`;
       const { url: thumbUrl, key: thumbKey } = await getSignedUploadUrl('elements/thumbnails', thumbFilename, 'image/png');
       await uploadToR2(thumbUrl, thumbnailBlob);
+
+      // Photo-frame window mask (2D only) — a separate 2D asset alongside the overlay; its key goes
+      // into placement_config.photo.mask below. Uploaded raw (no bg-removal — the alpha IS the mask).
+      let maskKey = null;
+      if (assetType === '2D' && isPhotoFrame && maskFile) {
+        const maskFilename = `${crypto.randomUUID()}.png`;
+        const { url: maskUrl, key } = await getSignedUploadUrl('elements/files/2D', maskFilename, 'image/png');
+        await uploadToR2(maskUrl, maskFile);
+        maskKey = key;
+      }
 
       let builtPlacementConfig = {};
       {
@@ -586,6 +617,12 @@ export default function AddElement() {
           builtPlacementConfig.foldable = true;
           if (foldAngle  !== '') builtPlacementConfig.fold  = parseFloat(foldAngle);
           if (spineSplit !== '') builtPlacementConfig.spine = parseFloat(spineSplit);
+        }
+        // Photo-cake frame (2D image only): the window mask is uploaded above; record it as
+        // placement_config.photo.mask so the designer draws the customer's photo through the window,
+        // clipped to this shape. See spattoo-core PLACEMENT_CONFIG.md (photo).
+        if (assetType === '2D' && isPhotoFrame && maskKey) {
+          builtPlacementConfig.photo = { mask: maskKey };
         }
         // Pixel-recolour region (2D image only) — the companion to the generic "Color changeable"
         // capability: it tells the designer WHICH pixels the colour picker recolours. GLB recolour
@@ -676,6 +713,9 @@ export default function AddElement() {
       setFoldable(false);
       setFoldAngle('');
       setSpineSplit('');
+      setIsPhotoFrame(false);
+      setMaskFile(null);
+      setRemoveBgEnabled(true);
       setRecolorMethod('opaque');
       setRecolorGuard('12');
       setRecolorSat('0.25');
@@ -729,6 +769,19 @@ export default function AddElement() {
             file={assetFile}
             onChange={f => { setAssetFile(f); setGlbHasTexture(null); setUserPickedColor(false); setGlbRoughness(0.6); setGlbMetalness(0); setGlbEnvPreset('none'); setGlbRotation([0,0,0]); setFrontConfirmed(false); }}
           />
+
+          {assetType === '2D' && (
+            <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 8 }}
+              title="Run remove.bg on the uploaded image. Turn off for images whose transparency is already correct (e.g. a photo-frame overlay).">
+              <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={removeBgEnabled} onChange={e => setRemoveBgEnabled(e.target.checked)} />
+              <div>
+                <div style={s.checkLabel}>Remove background</div>
+                <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                  On by default. <b>Uncheck for photo-frame overlays</b> (and any PNG with an already-correct transparent area) so the image is uploaded untouched and uncropped — preserving its alpha and its alignment with the window mask.
+                </div>
+              </div>
+            </label>
+          )}
 
           {/* 3D preview + auto-capture */}
           {assetType === '3D' && assetFile && (
@@ -1073,6 +1126,21 @@ export default function AddElement() {
                         <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433', minWidth: 100 }}>Fold / spine</span>
                         <input type="number" min="0" max="75" step="1" style={{ ...s.input, flex: 1 }} value={foldAngle} placeholder="fold° — e.g. 32 (blank = 30)" onChange={e => setFoldAngle(e.target.value)} />
                         <input type="number" min="0.35" max="0.65" step="0.01" style={{ ...s.input, flex: 1 }} value={spineSplit} placeholder="spine — e.g. 0.5" onChange={e => setSpineSplit(e.target.value)} />
+                      </div>
+                    )}
+                    <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 4 }}
+                      title="Photo cake: the customer uploads a photo that shows through this frame's window.">
+                      <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={isPhotoFrame} onChange={e => setIsPhotoFrame(e.target.checked)} />
+                      <div>
+                        <div style={s.checkLabel}>Photo frame (customer uploads a photo)</div>
+                        <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                          The 2D asset above is the <b>frame overlay</b> — border art with a <b>transparent window</b>. The customer uploads their photo in the designer and it shows through the window (with zoom/pan). Below, add the <b>window mask</b>: a silhouette of the window opening (white window on transparent/black), same square framing as the overlay. Keep <b>Single per slot</b> off so each placed frame holds its own photo.
+                        </div>
+                      </div>
+                    </label>
+                    {isPhotoFrame && (
+                      <div style={{ marginTop: 6 }}>
+                        <FileDropZone label="Window mask (PNG, white window on transparent)" accept="image/png" file={maskFile} onChange={setMaskFile} />
                       </div>
                     )}
                   </>

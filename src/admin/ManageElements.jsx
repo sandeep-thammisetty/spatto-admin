@@ -425,6 +425,10 @@ export default function ManageElements() {
   // NOT deliberate, so plain "Save" must ignore it (only "Save + Thumbnail" persists it).
   const [thumbManual,      setThumbManual]      = useState(false);
   const [removingBg,       setRemovingBg]       = useState(false);
+  // 2D only: run remove.bg when generating the thumbnail from a replaced image. ON by default; turn
+  // OFF for images whose alpha is already authored (e.g. a photo-frame overlay). NOTE: the asset
+  // (image_url) is always uploaded untouched here regardless — this only governs the auto-thumbnail.
+  const [removeBgEnabled,  setRemoveBgEnabled]  = useState(true);
   const [glbColor,         setGlbColor]         = useState('#F0DEB8');
   const [userPickedColor,  setUserPickedColor]  = useState(false);
   const [glbRoughness,     setGlbRoughness]     = useState(0.6);
@@ -507,6 +511,7 @@ export default function ManageElements() {
     setNewAssetFile(null);
     setNewThumbBlob(null);
     setThumbManual(false);
+    setRemoveBgEnabled(true);
     setMsg(null);
     setUserPickedColor(false);
     setGlbColor('#F0DEB8');
@@ -552,11 +557,12 @@ export default function ManageElements() {
     setDescription(el.description ?? '');
   }
 
-  async function processRemoveBg(blob) {
+  async function processRemoveBg(blob, enabled = removeBgEnabled) {
     setRemovingBg(true);
     setNewThumbBlob(null);
     try {
-      const processed = await removeBg(blob);
+      // Skip remove.bg when disabled (the image's alpha is already authored, e.g. a photo frame).
+      const processed = enabled ? await removeBg(blob) : blob;
       setNewThumbBlob(processed);
     } catch {
       setNewThumbBlob(blob);
@@ -1417,6 +1423,19 @@ export default function ManageElements() {
                       <span style={{ fontSize: 12, color: '#6B8C74', fontWeight: 600 }}>
                         {newAssetFile ? `New file: ${newAssetFile.name}` : `Replace ${isGlb ? 'GLB' : 'image'}…`}
                       </span>
+                    </label>
+                  )}
+                  {!isPipingPattern && !isGlb && (
+                    <label style={{ ...s.checkRow, alignItems: 'flex-start', marginTop: 8 }}
+                      title="Run remove.bg when generating the thumbnail from a replaced image. The asset itself is always uploaded untouched.">
+                      <input type="checkbox" style={{ ...s.checkbox, marginTop: 1 }} checked={removeBgEnabled}
+                        onChange={e => { const v = e.target.checked; setRemoveBgEnabled(v); if (newAssetFile) processRemoveBg(newAssetFile, v); }} />
+                      <div>
+                        <div style={s.checkLabel}>Remove background</div>
+                        <div style={{ fontSize: 11, color: '#6B8C74', marginTop: 1 }}>
+                          On by default; affects the auto-generated <b>thumbnail</b> only (the image asset is uploaded untouched here either way). <b>Uncheck for photo-frame overlays</b> and other already-transparent PNGs.
+                        </div>
+                      </div>
                     </label>
                   )}
                 </div>
