@@ -70,6 +70,12 @@ export async function fetchAdminTextures()       { return get('/api/admin/textur
 export async function createTexture(payload)     { return post('/api/admin/textures', payload); }
 export async function updateTexture(id, payload) { return patch(`/api/admin/textures/${id}`, payload); }
 
+// ── Materials (frosting material + its ordered style list) ─────────────────────
+export async function fetchMaterials()            { return get('/api/materials'); }
+export async function fetchAdminMaterials()       { return get('/api/admin/materials'); }
+export async function createMaterial(payload)     { return post('/api/admin/materials', payload); }
+export async function updateMaterial(id, payload) { return patch(`/api/admin/materials/${id}`, payload); }
+
 export async function fetchAdminElementTypes() {
   return get('/api/admin/element-types');
 }

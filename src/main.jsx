@@ -34,8 +34,10 @@ const RecolorTester         = lazy(() => import('./admin/RecolorTester.jsx'));
 const FreehandPenStudio     = lazy(() => import('./admin/FreehandPenStudio.jsx'));
 const RolesCapabilities     = lazy(() => import('./admin/RolesCapabilities.jsx'));
 const TextureCalibrator     = lazy(() => import('./admin/TextureCalibrator.jsx'));
+const MaterialStyles        = lazy(() => import('./admin/MaterialStyles.jsx'));
 const ROUTES = {
   '/elements/texture-calibrator': TextureCalibrator,
+  '/elements/material-styles':    MaterialStyles,
   '/templates/create':    CreateTemplate,
   '/templates/design':    DesignTemplate,
   '/templates':           ManageTemplates,
@@ -80,6 +82,7 @@ const NAV_GROUPS = [
     { href: '/elements/add',    label: 'Add Element' },
     { href: '/elements/manage', label: 'Manage Elements' },
     { href: '/elements/types',  label: 'Element Types' },
+    { href: '/elements/material-styles', label: 'Material → Styles' },
   ] },
   { title: 'Editors', items: [
     { href: '/elements/build-from-inspiration', label: 'Build from Inspiration' },
