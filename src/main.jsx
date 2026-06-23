@@ -33,6 +33,7 @@ const ButterflyStudio       = lazy(() => import('./admin/ButterflyStudio.jsx'));
 const PhotoFrameStudio      = lazy(() => import('./admin/PhotoFrameStudio.jsx'));
 const RecolorTester         = lazy(() => import('./admin/RecolorTester.jsx'));
 const FreehandPenStudio     = lazy(() => import('./admin/FreehandPenStudio.jsx'));
+const ChocolateDripStudio   = lazy(() => import('./admin/ChocolateDripStudio.jsx'));
 const RolesCapabilities     = lazy(() => import('./admin/RolesCapabilities.jsx'));
 const TextureCalibrator     = lazy(() => import('./admin/TextureCalibrator.jsx'));
 const MaterialStyles        = lazy(() => import('./admin/MaterialStyles.jsx'));
@@ -65,6 +66,7 @@ const ROUTES = {
   '/elements/photo-frame':       PhotoFrameStudio,
   '/elements/recolor-tester':    RecolorTester,
   '/elements/freehand-pen':      FreehandPenStudio,
+  '/elements/chocolate-drip':    ChocolateDripStudio,
   '/admin/roles':                RolesCapabilities,
 };
 
@@ -98,6 +100,7 @@ const NAV_GROUPS = [
     { href: '/elements/texture-calibrator', label: 'Texture Calibrator' },
     { href: '/elements/cream-pen',      label: 'Cream Pen' },
     { href: '/elements/freehand-pen',   label: 'Freehand Pen' },
+    { href: '/elements/chocolate-drip', label: 'Chocolate Drip' },
     { href: '/elements/folded-sticker', label: 'Folded Butterfly' },
     { href: '/elements/photo-frame',    label: 'Photo Frame Studio' },
     { href: '/elements/recolor-tester', label: 'Recolour Tester' },
