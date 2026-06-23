@@ -5,7 +5,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   fetchAdminElementTypes, fetchAllElements, fetchParentElements,
-  getSignedUploadUrl, uploadToR2, updateGlobalElement, removeBg, deleteR2Object,
+  getSignedUploadUrl, uploadToR2, updateGlobalElement, createGlobalElement, removeBg, deleteR2Object,
 } from '../lib/api.js';
 import { PatternCakeThumb } from './PipingCalibrator.jsx';
 import CraftGuideEditor from './CraftGuideEditor.jsx';
@@ -391,6 +391,7 @@ export default function ManageElements() {
   const [loading,      setLoading]      = useState(true);
   const [query,        setQuery]        = useState('');
   const [selectedId,   setSelectedId]   = useState(null);
+  const [cloneMode,    setCloneMode]    = useState(false);   // "create a NEW element from these settings"
 
   // Derive selected element from list (auto-updates after reload)
   const selectedEl = elements.find(e => e.id === selectedId) ?? null;
@@ -498,6 +499,7 @@ export default function ManageElements() {
   }
 
   function selectElement(el) {
+    setCloneMode(false);   // selecting a row always exits clone mode
     setSelectedId(el.id);
     setName(el.name);
     setElementTypeId(el.element_type_id);
@@ -692,6 +694,99 @@ export default function ManageElements() {
     return Object.keys(o).length ? o : '';
   };
 
+  // Build the element fields + merged placement_config from the CURRENT form state (no id, no asset
+  // upload). Shared by Save (update) and Clone (create) so the two can't drift. Throws on bad JSON.
+  function buildElementFields() {
+    let parsedConfig = {};
+    try { parsedConfig = JSON.parse(placementConfig); }
+    catch (e) { throw new Error(`placement_config is not valid JSON — fix it before saving (${e.message}).`); }
+    // Merge zone config — write the chosen mode for EVERY applicable zone, explicitly (default
+    // 'hug'). No more "absent means hug": the saved config states the mode for each zone, so the
+    // designer never has to guess. (Existing config still wins via the designer's spread/backfill.)
+    applicableZones.forEach(z => { parsedConfig[z] = placementZoneConfig[z] || 'hug'; });
+    if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
+    else delete parsedConfig.r;
+    // Optional size-dial bounds { min, max, step } (each independent). r is the default WITHIN this
+    // range; all blank → drop the key so the designer keeps its built-in bounds.
+    const scaleBounds = scalePatch(placementScaleMin, placementScaleMax, placementScaleStep);
+    if (scaleBounds !== '') parsedConfig.scale = scaleBounds;
+    else delete parsedConfig.scale;
+    // Placement STYLE (hero = one instance per tier×surface vs. free scatter). Config-driven,
+    // never inferred from element type — see spattoo-core INVARIANTS.md rule #4.
+    if (singlePerSlot) parsedConfig.single_per_slot = true;
+    else delete parsedConfig.single_per_slot;
+    // Scatter STYLE: many packed instances driven by a density control (sprinkles), vs. discrete
+    // decor placed/duplicated by hand. Config-driven; the designer reads placement_config.scatter,
+    // never the element type. Mutually exclusive with single_per_slot.
+    if (canScatter) { parsedConfig.scatter = true; delete parsedConfig.single_per_slot; }
+    else delete parsedConfig.scatter;
+    // Side seating: default flush (true hug); proud = stands off the wall.
+    if (sideProud) parsedConfig.side_proud = true;
+    else delete parsedConfig.side_proud;
+    // Hero side-hug size = fraction of tier wall height (designer derives at render; r = stand size).
+    if (hugFill !== '') parsedConfig.hug_fill = parseFloat(hugFill);
+    else delete parsedConfig.hug_fill;
+    // Building-block part of a pattern — hidden from the picker, placed via its parent pattern.
+    if (patternOnly) parsedConfig.pattern_only = true;
+    else delete parsedConfig.pattern_only;
+    // Shared fondant surface (designer overlays the matte grain under any colour). Off → GLB's own.
+    if (useFondant) parsedConfig.useSharedFondantTexture = true;
+    else delete parsedConfig.useSharedFondantTexture;
+    // Facing offset persisted in DEGREES + rotation_unit:'deg' (unified with AddElement and the
+    // piping calibrator; read by the designer via facingOffsetRadians). Clearing it drops both.
+    if (glbRotation.some(v => v !== 0)) {
+      parsedConfig.rotation      = glbRotation.map(v => Math.round(v));
+      parsedConfig.rotation_unit = 'deg';
+    } else {
+      delete parsedConfig.rotation;
+      delete parsedConfig.rotation_unit;
+    }
+    // piping fields live directly in the placement_config JSON — no extra merge needed
+    const fields = {
+      name:             name.trim(),
+      element_type_id:  elementTypeId,
+      parent_id:        isParent ? null : (parentId || null),
+      allowed_zones:    applicableZones,
+      allowed_actions:  capabilities,
+      default_color:    defaultColor || null,
+      is_active:        isActive,
+      description,
+      placement_config: parsedConfig,
+    };
+    return { fields, parsedConfig };
+  }
+
+  // Upload any staged files (asset / alternate GLB / thumbnail) into `fields`/`parsedConfig`. Shared
+  // by Save and Clone. `forceThumb` always persists the staged thumbnail (Clone needs one); plain
+  // Save only persists a DELIBERATE thumbnail change (the "Save + Thumbnail" button or a manual one).
+  async function uploadStagedAssets(fields, parsedConfig, forceThumb) {
+    if (newAssetFile) {
+      const ext = newAssetFile.name.split('.').pop();
+      const folder = /\.(glb|gltf)$/i.test(newAssetFile.name) ? 'elements/files/3D' : 'elements/files/2D';
+      const filename = `${crypto.randomUUID()}.${ext}`;
+      const contentType = newAssetFile.type || (folder.includes('3D') ? 'model/gltf-binary' : 'image/png');
+      const { url, key } = await getSignedUploadUrl(folder, filename, contentType);
+      await uploadToR2(url, newAssetFile);
+      fields.image_url = key;
+      fields.file_size = newAssetFile.size ?? null;
+    }
+    if (altAssetFile) {
+      const ext = altAssetFile.name.split('.').pop();
+      const filename = `${crypto.randomUUID()}.${ext}`;
+      const { url, key } = await getSignedUploadUrl('elements/files/3D', filename, altAssetFile.type || 'model/gltf-binary');
+      await uploadToR2(url, altAssetFile);
+      parsedConfig.bottom_alt_glb_url = key;
+      parsedConfig.top_alt_glb_url    = key;
+      fields.placement_config = parsedConfig;
+    }
+    if (newThumbBlob && (forceThumb || thumbManual)) {
+      const filename = `${crypto.randomUUID()}.png`;
+      const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
+      await uploadToR2(url, newThumbBlob);
+      fields.thumbnail_url = key;
+    }
+  }
+
   async function handleSave(withThumbnail = false) {
     if (!selectedEl || !name.trim()) {
       setMsg({ ok: false, text: 'Name is required.' });
@@ -718,105 +813,11 @@ export default function ManageElements() {
     setMsg(null);
 
     try {
-      // Fail loudly on bad JSON instead of silently saving {} (which would wipe parts/config).
-      let parsedConfig = {};
-      try { parsedConfig = JSON.parse(placementConfig); }
-      catch (e) {
-        setMsg({ ok: false, text: `placement_config is not valid JSON — fix it before saving (${e.message}).` });
-        setSaving(false);
-        return;
-      }
-      // Merge zone config — write the chosen mode for EVERY applicable zone, explicitly (default
-      // 'hug'). No more "absent means hug": the saved config states the mode for each zone, so the
-      // designer never has to guess. (Existing config still wins via the designer's spread/backfill.)
-      applicableZones.forEach(z => { parsedConfig[z] = placementZoneConfig[z] || 'hug'; });
-      if (placementScale !== '') parsedConfig.r = parseFloat(placementScale);
-      else delete parsedConfig.r;
-      // Optional size-dial bounds { min, max, step } (each independent). r is the default WITHIN this
-      // range; all blank → drop the key so the designer keeps its built-in bounds.
-      const scaleBounds = scalePatch(placementScaleMin, placementScaleMax, placementScaleStep);
-      if (scaleBounds !== '') parsedConfig.scale = scaleBounds;
-      else delete parsedConfig.scale;
-      // Placement STYLE (hero = one instance per tier×surface vs. free scatter). Config-driven,
-      // never inferred from element type — see spattoo-core INVARIANTS.md rule #4.
-      if (singlePerSlot) parsedConfig.single_per_slot = true;
-      else delete parsedConfig.single_per_slot;
-      // Scatter STYLE: many packed instances driven by a density control (sprinkles), vs. discrete
-      // decor placed/duplicated by hand. Config-driven; the designer reads placement_config.scatter,
-      // never the element type. Mutually exclusive with single_per_slot.
-      if (canScatter) { parsedConfig.scatter = true; delete parsedConfig.single_per_slot; }
-      else delete parsedConfig.scatter;
-      // Side seating: default flush (true hug); proud = stands off the wall.
-      if (sideProud) parsedConfig.side_proud = true;
-      else delete parsedConfig.side_proud;
-      // Hero side-hug size = fraction of tier wall height (designer derives at render; r = stand size).
-      if (hugFill !== '') parsedConfig.hug_fill = parseFloat(hugFill);
-      else delete parsedConfig.hug_fill;
-      // Building-block part of a pattern — hidden from the picker, placed via its parent pattern.
-      if (patternOnly) parsedConfig.pattern_only = true;
-      else delete parsedConfig.pattern_only;
-      // Shared fondant surface (designer overlays the matte grain under any colour). Off → GLB's own.
-      if (useFondant) parsedConfig.useSharedFondantTexture = true;
-      else delete parsedConfig.useSharedFondantTexture;
-      // Facing offset persisted in DEGREES + rotation_unit:'deg' (unified with AddElement and the
-      // piping calibrator; read by the designer via facingOffsetRadians). Clearing it drops both.
-      if (glbRotation.some(v => v !== 0)) {
-        parsedConfig.rotation      = glbRotation.map(v => Math.round(v));
-        parsedConfig.rotation_unit = 'deg';
-      } else {
-        delete parsedConfig.rotation;
-        delete parsedConfig.rotation_unit;
-      }
-      // piping fields live directly in the placement_config JSON — no extra merge needed
-
-      const updates = {
-        name:             name.trim(),
-        element_type_id:  elementTypeId,
-        parent_id:        isParent ? null : (parentId || null),
-        allowed_zones:    applicableZones,
-        allowed_actions:  capabilities,
-        default_color:    defaultColor || null,
-        is_active:        isActive,
-        placement_config: parsedConfig,
-      };
-
-      // Upload new asset file if provided → always a new R2 key
-      if (newAssetFile) {
-        const ext = newAssetFile.name.split('.').pop();
-        const folder = /\.(glb|gltf)$/i.test(newAssetFile.name) ? 'elements/files/3D' : 'elements/files/2D';
-        const filename = `${crypto.randomUUID()}.${ext}`;
-        const contentType = newAssetFile.type || (folder.includes('3D') ? 'model/gltf-binary' : 'image/png');
-        const { url, key } = await getSignedUploadUrl(folder, filename, contentType);
-        await uploadToR2(url, newAssetFile);
-        updates.image_url = key;
-        // Keep the stored size in sync with the new file.
-        updates.file_size = newAssetFile.size ?? null;
-      }
-
-      // Upload the alternate piping shape (version B) → store its key in placement_config
-      // for both zones (each zone uses it only when its *_alt_enabled is true).
-      if (altAssetFile) {
-        const ext = altAssetFile.name.split('.').pop();
-        const filename = `${crypto.randomUUID()}.${ext}`;
-        const { url, key } = await getSignedUploadUrl('elements/files/3D', filename, altAssetFile.type || 'model/gltf-binary');
-        await uploadToR2(url, altAssetFile);
-        parsedConfig.bottom_alt_glb_url = key;
-        parsedConfig.top_alt_glb_url    = key;
-        updates.placement_config = parsedConfig;
-      }
-
-      // Persist a new thumbnail only when it's a deliberate change: the user clicked
-      // "Save + Thumbnail" (withThumbnail), OR they manually uploaded/replaced one (thumbManual).
-      // The 3D preview auto-stages a blob on load purely for the live preview — plain "Save" must
-      // NOT upload that, so routine data edits keep the existing thumbnail untouched.
-      if (newThumbBlob && (withThumbnail || thumbManual)) {
-        const filename = `${crypto.randomUUID()}.png`;
-        const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
-        await uploadToR2(url, newThumbBlob);
-        updates.thumbnail_url = key;
-      }
-
-      updates.description = description;
+      let fields, parsedConfig;
+      try { ({ fields, parsedConfig } = buildElementFields()); }
+      catch (e) { setMsg({ ok: false, text: e.message }); setSaving(false); return; }
+      await uploadStagedAssets(fields, parsedConfig, withThumbnail);
+      const updates = fields;
       await updateGlobalElement(selectedEl.id, updates);
 
       // New file is uploaded and the DB now points at it — safe to delete the old object.
@@ -837,6 +838,64 @@ export default function ManageElements() {
       setNewThumbBlob(null);
       setThumbManual(false);
       await loadAll();
+    } catch (err) {
+      setMsg({ ok: false, text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Enter clone mode: keep every loaded setting, but drop the source's identity + art so the next
+  // save creates a NEW element. The user just adds the new image/GLB (+ thumbnail).
+  function startClone() {
+    setCloneMode(true);
+    setNewAssetFile(null);
+    setAltAssetFile(null);
+    setNewThumbBlob(null);
+    setThumbManual(false);
+    setName(`${name.trim()} copy`);
+    setMsg({ ok: true, text: 'Cloning — settings carried over. Add the new image/GLB and a thumbnail, then Create clone.' });
+  }
+
+  function cancelClone() {
+    setCloneMode(false);
+    setNewAssetFile(null);
+    setAltAssetFile(null);
+    setNewThumbBlob(null);
+    setThumbManual(false);
+    if (selectedEl) { setName(selectedEl.name ?? ''); }   // restore the source name
+    setMsg(null);
+  }
+
+  // Create a NEW element from the current (cloned) settings. Same payload builder as Save, but POSTs
+  // a fresh row — the only required new inputs are the asset and a thumbnail.
+  async function handleClone() {
+    if (!name.trim()) { setMsg({ ok: false, text: 'Name is required.' }); return; }
+    if (!newAssetFile) { setMsg({ ok: false, text: 'Upload the new image/GLB for the clone first.' }); return; }
+    if (!newThumbBlob) { setMsg({ ok: false, text: 'Add a thumbnail for the clone (upload one, or capture the front view).' }); return; }
+    if (isGlb && rotationDirty && !frontConfirmed) {
+      setMsg({ ok: false, text: 'Rotation was changed — click "Set front view" to confirm the orientation before creating the clone.' });
+      return;
+    }
+    setSaving(true);
+    setMsg(null);
+    try {
+      let fields, parsedConfig;
+      try { ({ fields, parsedConfig } = buildElementFields()); }
+      catch (e) { setMsg({ ok: false, text: e.message }); setSaving(false); return; }
+      await uploadStagedAssets(fields, parsedConfig, true);   // clone always persists its new thumbnail
+      const created = await createGlobalElement(fields);
+      setCloneMode(false);
+      setNewAssetFile(null);
+      setAltAssetFile(null);
+      setNewThumbBlob(null);
+      setThumbManual(false);
+      await loadAll();
+      // Jump to the new element so it's ready to tweak; if the API didn't echo a full row, restore the
+      // source so the form isn't left half-cloned.
+      if (created?.id && created.element_type_id) selectElement(created);
+      else if (selectedEl) selectElement(selectedEl);
+      setMsg({ ok: true, text: `Created "${fields.name}" as a new element.` });
     } catch (err) {
       setMsg({ ok: false, text: err.message });
     } finally {
@@ -1881,24 +1940,59 @@ export default function ManageElements() {
                   />
                 )}
 
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    style={{ ...s.btn('primary'), flex: 1, opacity: saving ? 0.6 : 1 }}
-                    onClick={() => handleSave(false)}
-                    disabled={saving}
-                    title="Save all fields without regenerating the thumbnail (keeps the existing image)"
-                  >
-                    {saving ? 'Saving…' : 'Save Data'}
-                  </button>
-                  <button
-                    style={{ ...s.btn('secondary'), flex: 1, opacity: (saving || removingBg) ? 0.6 : 1 }}
-                    onClick={() => handleSave(true)}
-                    disabled={saving || removingBg}
-                    title="Save and upload the captured thumbnail (uses a remove.bg credit)"
-                  >
-                    {removingBg ? 'Processing thumbnail…' : 'Save + Thumbnail'}
-                  </button>
-                </div>
+                {cloneMode ? (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#3D5A44', background: '#F4F8F5', border: '1px solid #C5D4C8', borderRadius: 8, padding: '8px 10px', marginBottom: 8, lineHeight: 1.45 }}>
+                      Creating a NEW element from these settings. Add the new image/GLB (and a thumbnail) below, then Create clone.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        style={{ ...s.btn('primary'), flex: 1, opacity: saving ? 0.6 : 1 }}
+                        onClick={handleClone}
+                        disabled={saving}
+                        title="Create a new element from these settings + the new asset"
+                      >
+                        {saving ? 'Creating…' : 'Create clone'}
+                      </button>
+                      <button
+                        style={{ ...s.btn('secondary'), flex: 1, opacity: saving ? 0.6 : 1 }}
+                        onClick={cancelClone}
+                        disabled={saving}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        style={{ ...s.btn('primary'), flex: 1, opacity: saving ? 0.6 : 1 }}
+                        onClick={() => handleSave(false)}
+                        disabled={saving}
+                        title="Save all fields without regenerating the thumbnail (keeps the existing image)"
+                      >
+                        {saving ? 'Saving…' : 'Save Data'}
+                      </button>
+                      <button
+                        style={{ ...s.btn('secondary'), flex: 1, opacity: (saving || removingBg) ? 0.6 : 1 }}
+                        onClick={() => handleSave(true)}
+                        disabled={saving || removingBg}
+                        title="Save and upload the captured thumbnail (uses a remove.bg credit)"
+                      >
+                        {removingBg ? 'Processing thumbnail…' : 'Save + Thumbnail'}
+                      </button>
+                    </div>
+                    <button
+                      style={{ ...s.btn('secondary'), marginTop: 8, opacity: saving ? 0.6 : 1 }}
+                      onClick={startClone}
+                      disabled={saving}
+                      title="Create a NEW element from these settings — you only add a new image/GLB"
+                    >
+                      Clone to new element
+                    </button>
+                  </>
+                )}
 
                 {msg && <div style={s.msg(msg.ok)}>{msg.text}</div>}
               </>
