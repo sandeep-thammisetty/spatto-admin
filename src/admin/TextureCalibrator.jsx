@@ -2,15 +2,18 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
-import { CREAM_STYLES, STYLE_ORDER, buildStyledWall, getRusticNormalMap, loadStrokeMaps, displaceByHeightField } from '@spattoo/designer';
+import { CREAM_STYLES, STYLE_ORDER, buildStyledWall, getRusticNormalMap, getWeaveNormalMap, weaveTiles, loadStrokeMaps, displaceByHeightField } from '@spattoo/designer';
 import { fetchAdminTextures, createTexture, updateTexture } from '../lib/api.js';
 
 // Surface-map generators (normal-map finishes like rustic) — keyed like the designer's registry.
-const SURFACE_MAPS = { rustic: getRusticNormalMap };
+const SURFACE_MAPS = { rustic: getRusticNormalMap, weave: getWeaveNormalMap };
 
 // Local test asset: a real palette-knife reference, converted to a normal map in-browser. (Later this
 // becomes a baker-uploaded R2 image; this proves the image→relief approach before we wire uploads.)
 const LOCAL_REF_URL = '/rustic-ref.png';
+
+// Preview-only cream colours — handy swatches to judge the texture on light/dark cream (not saved).
+const CAKE_COLORS = ['#f0cad6', '#f7e9d2', '#e8d8c3', '#cfe3df', '#d9cbe8', '#f3d9a8', '#bcd0c4', '#f5f0e6'];
 
 // Texture calibrator — author the DB config for cream "style" finishes (wave/swirl/rustic). Previews
 // with the SAME buildStyledWall the designer renders, so what you tune is what customers see. Saves
@@ -75,7 +78,7 @@ function StrokeDecals({ maps, color, depth, count, seed }) {
   ));
 }
 
-function PreviewMesh({ work, overrideMaps }) {
+function PreviewMesh({ work, overrideMaps, cakeColor = '#f0cad6' }) {
   const sig = work.params.map(p => p.default).join(',') + '|' + work.wall + '|' + work.surfaceMap;
   const defaults = useMemo(() => {
     const o = {}; for (const p of work.params) o[p.key] = p.default; return o;
@@ -83,10 +86,19 @@ function PreviewMesh({ work, overrideMaps }) {
   }, [sig]);
   // Heavy geometry/normal for the wave/swirl/procedural cases (unused in the decal case).
   const built = useMemo(() => {
-    const d = (defaults.scale ?? 9) / 9;
-    const rx = Math.max(1, Math.round(7 * d)), ry = Math.max(1, Math.round(5 * d));
-    if (work.surfaceMap && SURFACE_MAPS[work.surfaceMap]) return { nrm: tile(SURFACE_MAPS[work.surfaceMap](), rx, ry) };
-    return { geo: buildStyledWall(work.wall, R, H, defaults) };
+    let nrm = null, geo = null;
+    if (work.surfaceMap && SURFACE_MAPS[work.surfaceMap]) {
+      if (work.surfaceMap === 'weave') {
+        // Hybrid finish: bake the normal at the SAME tile count its displacement uses → lines align.
+        const { around, up } = weaveTiles(R, H, defaults.tile ?? 0.8);
+        nrm = tile(getWeaveNormalMap({ grooves: defaults.grooves ?? 5, width: defaults.width ?? 0.5, border: defaults.border ?? 0, grain: defaults.grain ?? 0.12 }), around, up);
+      } else {
+        const d = (defaults.scale ?? 9) / 9;
+        nrm = tile(SURFACE_MAPS[work.surfaceMap](), Math.max(1, Math.round(7 * d)), Math.max(1, Math.round(5 * d)));
+      }
+    }
+    if (work.wall && work.wall !== 'smooth') geo = buildStyledWall(work.wall, R, H, defaults);
+    return { geo, nrm };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
 
@@ -97,7 +109,7 @@ function PreviewMesh({ work, overrideMaps }) {
       <group>
         <mesh castShadow receiveShadow>
           <cylinderGeometry args={[R, R, H, 96, 1]} />
-          <meshStandardMaterial color="#f3ece2" roughness={0.5} metalness={0} />
+          <meshStandardMaterial color={cakeColor} roughness={0.5} metalness={0} />
         </mesh>
         <StrokeDecals maps={overrideMaps} color="#d62828" depth={defaults.depth ?? 1} count={count} seed={12345} />
       </group>
@@ -107,8 +119,8 @@ function PreviewMesh({ work, overrideMaps }) {
   return (
     <mesh key={work.wall + (work.surfaceMap || '')} castShadow>
       {built.geo ? <primitive object={built.geo} attach="geometry" /> : <cylinderGeometry args={[R, R, H, 128, 1]} />}
-      <meshPhysicalMaterial color="#f0cad6" roughness={0.55} metalness={0}
-        sheen={0.5} sheenRoughness={0.6} sheenColor="#fff6e8" clearcoat={0.12} clearcoatRoughness={0.5}
+      <meshPhysicalMaterial color={cakeColor} roughness={0.72} metalness={0}
+        sheen={0.45} sheenRoughness={0.65} sheenColor="#fff6e8" clearcoat={0.05} clearcoatRoughness={0.6}
         normalMap={built.nrm ?? null} normalScale={[defaults.depth ?? 0.5, defaults.depth ?? 0.5]} />
     </mesh>
   );
@@ -121,6 +133,7 @@ export default function TextureCalibrator() {
   const [msg, setMsg] = useState(null);
   const [useRefImage, setUseRefImage] = useState(false);
   const [refMaps, setRefMaps] = useState(null);
+  const [cakeColor, setCakeColor] = useState('#f0cad6');   // preview-only: see the texture on any cream colour
   const glRef = useRef(null);
 
   // Snapshot the live preview → POST to the dev server, which writes it to .snapshots/ in the project
@@ -232,6 +245,21 @@ export default function TextureCalibrator() {
         </div>
 
         <div style={s.section}>
+          <label style={s.lbl}>Cake colour (preview)</label>
+          <div style={s.colorRow}>
+            <input type="color" value={cakeColor} onChange={e => setCakeColor(e.target.value)} style={s.colorPick} />
+            <input style={{ ...s.input, flex: 1 }} value={cakeColor}
+              onChange={e => setCakeColor(e.target.value)} />
+          </div>
+          <div style={{ ...s.chipRow, marginTop: 8 }}>
+            {CAKE_COLORS.map(c => (
+              <button key={c} title={c} onClick={() => setCakeColor(c)}
+                style={{ ...s.swatch, background: c, outline: cakeColor.toLowerCase() === c ? '2px solid #3D5A44' : 'none' }} />
+            ))}
+          </div>
+        </div>
+
+        <div style={s.section}>
           <div style={s.lbl}>Parameters</div>
           {work.params.length === 0 && <div style={s.hint}>This algorithm has no tunable params.</div>}
           {work.params.map((p, i) => (
@@ -274,11 +302,11 @@ export default function TextureCalibrator() {
         <Canvas shadows camera={{ position: [0, 1, 3.6], fov: 40 }}
           gl={{ toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 0.9, preserveDrawingBuffer: true }}
           onCreated={({ gl }) => { glRef.current = gl; }}>
-          <ambientLight intensity={0.8} />
-          <directionalLight position={[6, 14, 8]} intensity={1.5} castShadow />
-          <directionalLight position={[-4, 4, -4]} intensity={0.4} />
+          <ambientLight intensity={1.05} />
+          <directionalLight position={[6, 14, 8]} intensity={1.0} castShadow />
+          <directionalLight position={[-4, 4, -4]} intensity={0.45} />
           <Environment preset="apartment" />
-          <PreviewMesh work={work} overrideMaps={useRefImage ? refMaps : null} />
+          <PreviewMesh work={work} overrideMaps={useRefImage ? refMaps : null} cakeColor={cakeColor} />
           <OrbitControls enablePan={false} minDistance={2.4} maxDistance={6} />
         </Canvas>
       </div>
@@ -298,6 +326,9 @@ const s = {
   chipRow: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   chip: { padding: '5px 12px', borderRadius: 16, border: '1.5px solid #C5D4C8', background: '#fff', fontSize: 13, color: '#3D5A44', cursor: 'pointer', fontFamily: 'inherit' },
   chipOn: { background: '#3D5A44', color: '#fff', borderColor: '#3D5A44' },
+  colorRow: { display: 'flex', gap: 8, alignItems: 'center' },
+  colorPick: { width: 44, height: 38, padding: 0, border: '1.5px solid #C5D4C8', borderRadius: 8, background: '#fff', cursor: 'pointer', flexShrink: 0 },
+  swatch: { width: 26, height: 26, borderRadius: '50%', border: '1.5px solid #C5D4C8', cursor: 'pointer', padding: 0, outlineOffset: 2 },
   paramCard: { border: '1px solid #E2E8E3', borderRadius: 10, padding: 10, marginBottom: 8 },
   paramHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   paramLabel: { fontSize: 13, fontWeight: 600, color: '#3D5A44', border: 'none', borderBottom: '1px dashed #C5D4C8', background: 'transparent', fontFamily: 'inherit', flex: 1, marginRight: 8 },
