@@ -3,13 +3,23 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 import { getCreamGrainNormalMap } from '../lib/creamWaveTexture.js';
+import { makeGoldLeafMaps } from '../lib/goldLeafTexture.js';
+import { fetchElementTypes, createGlobalElement, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
 import {
   buildSecondCreamLayer,
-  sampleProfile,
+  buildSecondCreamEdgeLine,
   flatProfile,
   SECOND_CREAM_DEFAULTS,
   SECOND_CREAM_PRESETS,
 } from '../lib/secondCreamLayer.js';
+
+// Shared cream micro-grain, tiled to match the base wall so the band reads as the
+// same buttercream (not smooth plastic).
+function makeGrain() {
+  const t = getCreamGrainNormalMap();
+  const c = t.clone(); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(8, 8); c.needsUpdate = true;
+  return c;
+}
 
 // Scene constants mirror the designer's bottom tier (see ChocolateDripStudio / PerchCalibrator) so the
 // finish is tuned at the exact scale customers see: radius 1.2, wall from BOARD_H up by BOTTOM_H.
@@ -20,11 +30,7 @@ const BRUSH = 3;                    // ± angular samples feathered per paint sa
 
 // White buttercream wall + board, with the shared cream micro-grain so it reads as cream, not plastic.
 function CakeMesh({ cakeColor }) {
-  const grain = useMemo(() => {
-    const t = getCreamGrainNormalMap();
-    const c = t.clone(); c.wrapS = c.wrapT = THREE.RepeatWrapping; c.repeat.set(8, 8); c.needsUpdate = true;
-    return c;
-  }, []);
+  const grain = useMemo(makeGrain, []);
   return (
     <group>
       <mesh position={[0, BOARD_H / 2, 0]}>
@@ -39,16 +45,38 @@ function CakeMesh({ cakeColor }) {
   );
 }
 
-// The raised second cream skin, rebuilt from the authored edge profile.
+// The raised second cream skin, rebuilt from the authored edge profile. Same matte
+// cream material as the base wall (grain normal map, no clearcoat) so the two layers
+// read as one buttercream in two colours — not a glossy plastic shell.
 function SecondCream({ edge, color, lift, noise, seed, fillSide }) {
   const geo = useMemo(
     () => buildSecondCreamLayer({ R, y0: Y0, wallH: BOTTOM_H, lift, edge, noise, seed, fillSide }),
     [edge, lift, noise, seed, fillSide],
   );
-  const mat = useMemo(() => new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.85, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.4,
-    side: THREE.DoubleSide, envMapIntensity: 0.9,
-  }), []);
+  const grain = useMemo(makeGrain, []);
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({
+    color, roughness: 0.92, metalness: 0,
+    normalMap: grain, normalScale: new THREE.Vector2(0.35, 0.35),
+    side: THREE.DoubleSide,
+  }), [grain]);
+  mat.color.set(color);
+  return <mesh geometry={geo} material={mat} />;
+}
+
+// Gold leaf along the torn edge — a clean ribbon wearing the procedural gold-foil
+// texture (crinkle luminance + ragged alpha + crinkle normal). The texture, not the
+// geometry, supplies the torn-foil irregularity.
+function GoldEdge({ edge, lift, noise, seed, color }) {
+  const geo = useMemo(
+    () => buildSecondCreamEdgeLine({ R, y0: Y0, wallH: BOTTOM_H, lift, edge, noise, seed }),
+    [edge, lift, noise, seed],
+  );
+  const { map, normalMap } = useMemo(() => makeGoldLeafMaps({ seed }), [seed]);
+  const mat = useMemo(() => new THREE.MeshStandardMaterial({
+    color, map, normalMap, normalScale: new THREE.Vector2(0.7, 0.7),
+    metalness: 0.9, roughness: 0.42, envMapIntensity: 1.6,
+    transparent: false, alphaTest: 0.45, side: THREE.DoubleSide,
+  }), [map, normalMap]);
   mat.color.set(color);
   return <mesh geometry={geo} material={mat} />;
 }
@@ -84,7 +112,7 @@ function Spinner({ enabled, groupRef }) {
   return null;
 }
 
-function Scene({ groupRef, autoRotate, paintMode, edge, setEdge, color, cakeColor, lift, noise, seed, fillSide }) {
+function Scene({ groupRef, autoRotate, paintMode, edge, setEdge, color, cakeColor, lift, noise, seed, fillSide, goldEdge, goldColor }) {
   // World hit point → local (θ, height) on the cake, accounting for the group's current spin.
   function paintAt(worldPoint) {
     const lp = groupRef.current.worldToLocal(worldPoint.clone());
@@ -112,6 +140,7 @@ function Scene({ groupRef, autoRotate, paintMode, edge, setEdge, color, cakeColo
       <group ref={groupRef}>
         <CakeMesh cakeColor={cakeColor} />
         <SecondCream edge={edge} color={color} lift={lift} noise={noise} seed={seed} fillSide={fillSide} />
+        {goldEdge && <GoldEdge edge={edge} lift={lift} noise={noise} seed={seed} color={goldColor} />}
         <PaintTarget enabled={paintMode} onPaint={paintAt} />
       </group>
       <Spinner enabled={autoRotate} groupRef={groupRef} />
@@ -169,10 +198,17 @@ export default function SecondCreamLayerStudio() {
   const [noise, setNoise]       = useState(SECOND_CREAM_DEFAULTS.noise);
   const [seed, setSeed]         = useState(1);
   const [fillSide, setFillSide] = useState(SECOND_CREAM_DEFAULTS.fillSide);
+  const [goldEdge, setGoldEdge] = useState(false);
+  const [goldColor, setGoldColor] = useState('#c89b3c');
   const [mode, setMode]         = useState('orbit');   // 'orbit' | 'paint'
   const [autoRotate, setAutoRotate] = useState(false);
 
   const groupRef = useRef(null);
+  const canvasWrapRef = useRef(null);
+
+  const [saveName, setSaveName] = useState('Cream Layer');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
 
   function smooth() {
     setEdge((prev) => {
@@ -188,6 +224,54 @@ export default function SecondCreamLayerStudio() {
     // Tuned engine defaults (not the per-customer edge, which is authored at runtime in the designer).
     const json = { second_cream: { lift: +lift.toFixed(3), noise: +noise.toFixed(3), fill_side: fillSide } };
     navigator.clipboard?.writeText(JSON.stringify(json, null, 2));
+  }
+
+  async function captureThumbnail() {
+    const cnv = canvasWrapRef.current?.querySelector('canvas');
+    if (!cnv) return null;
+    const blob = await new Promise(res => cnv.toBlob(res, 'image/png'));
+    if (!blob) return null;
+    const filename = `${crypto.randomUUID()}.png`;
+    const { url, key } = await getSignedUploadUrl('elements/thumbnails', filename, 'image/png');
+    await uploadToR2(url, blob);
+    return key;
+  }
+
+  // Author the cream layer as a file-less master-data element (cake_elements) under the "Cream Layer"
+  // type. placement_config carries the dispatch flag + tuned defaults; the customer authors the torn
+  // edge / colour / gold per-instance in the designer. Mirrors ChocolateDripStudio.saveAsElement.
+  async function saveAsElement() {
+    if (!saveName.trim()) { setMsg({ ok: false, text: 'Give the element a name.' }); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const types = await fetchElementTypes();
+      const creamType = (types ?? []).find(t => t.slug === 'cream_layer' || (t.name ?? '').trim().toLowerCase() === 'cream layer');
+      if (!creamType) throw new Error('No "Cream Layer" element type found — create it first.');
+      let thumbnail_url = null;
+      try { thumbnail_url = await captureThumbnail(); } catch { /* thumbnail is best-effort */ }
+      const placement_config = {
+        second_cream: true,   // core dispatch flag (config-driven; no element-type branch in render)
+        // Seed defaults for a new layer instance; the customer overrides edge/colour/gold at runtime.
+        second_cream_config: {
+          lift: +lift.toFixed(3),
+          fillSide,
+          noise: +noise.toFixed(3),
+          gold: { on: goldEdge, color: goldColor },
+        },
+      };
+      await createGlobalElement({
+        name: saveName.trim(),
+        element_type_id: creamType.id,
+        allowed_zones: ['side'],   // the band rides the tier wall
+        default_color: color,
+        image_url: null,
+        thumbnail_url,
+        placement_config,
+      });
+      setMsg({ ok: true, text: `Saved "${saveName.trim()}" — pick it from Decorations in the designer.` });
+    } catch (e) {
+      setMsg({ ok: false, text: e.message });
+    } finally { setBusy(false); }
   }
 
   return (
@@ -230,6 +314,13 @@ export default function SecondCreamLayerStudio() {
             <SegBtn active={fillSide === 'above'} onClick={() => setFillSide('above')}>Above line</SegBtn>
           </div>
 
+          <div style={{ ...S.row, marginTop: 14 }}>
+            <span style={{ ...S.rowLabel, minWidth: 0 }}>Gold edge</span>
+            <input type="checkbox" checked={goldEdge} onChange={e => setGoldEdge(e.target.checked)} style={{ accentColor: '#3D5A44', width: 18, height: 18 }} />
+            {goldEdge && <input type="color" value={goldColor} onChange={e => setGoldColor(e.target.value)} style={{ ...S.colorInput, width: 32, marginLeft: 8 }} />}
+            <div style={{ flex: 1 }} />
+          </div>
+
           <div style={{ marginTop: 14 }}>
             <Slider label="Lift"  value={lift}  min={0}    max={0.12} step={0.005} onChange={setLift}  fmt={v => v.toFixed(3)} />
             <Slider label="Torn"  value={noise} min={0}    max={0.18} step={0.005} onChange={setNoise} fmt={v => v.toFixed(3)} />
@@ -252,13 +343,23 @@ export default function SecondCreamLayerStudio() {
           </div>
 
           <button style={S.ghost} onClick={copyJson}>Copy JSON</button>
-          <div style={S.hint}>
-            Look-tuning only — no DB. The torn edge is authored by the customer in the designer at runtime; this studio
-            tunes the engine (lift / torn / fill) and the raised-lip look before porting to core.
+
+          <div style={{ marginTop: 14, borderTop: '1px solid #E3EAE5', paddingTop: 12 }}>
+            <label style={S.label}>Save as Cream Layer element</label>
+            <input value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Element name"
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1.5px solid #C5D4C8', fontSize: 13, fontFamily: 'Quicksand, sans-serif', color: '#2C4433', boxSizing: 'border-box' }} />
+            <button style={{ ...S.btn, opacity: busy ? 0.6 : 1 }} onClick={saveAsElement} disabled={busy}>
+              {busy ? 'Saving…' : 'Save to library'}
+            </button>
+            {msg && <div style={{ ...S.hint, color: msg.ok ? '#2C7A3F' : '#C0392B', fontWeight: 700 }}>{msg.text}</div>}
+            <div style={S.hint}>
+              Saves a file-less element under the “Cream Layer” type with the tuned defaults (lift / torn / fill / gold).
+              The customer authors the torn edge, colour and gold per-instance in the designer.
+            </div>
           </div>
         </div>
 
-        <div style={{ ...S.card, padding: 0, overflow: 'hidden' }}>
+        <div style={{ ...S.card, padding: 0, overflow: 'hidden' }} ref={canvasWrapRef}>
           <div style={{ height: 600, background: '#E8EDE9', cursor: mode === 'paint' ? 'crosshair' : 'grab' }}>
             <Canvas gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 1.9, 5], fov: 40 }}>
               <Scene
@@ -268,6 +369,7 @@ export default function SecondCreamLayerStudio() {
                 edge={edge} setEdge={setEdge}
                 color={color} cakeColor={cakeColor}
                 lift={lift} noise={noise} seed={seed} fillSide={fillSide}
+                goldEdge={goldEdge} goldColor={goldColor}
               />
             </Canvas>
           </div>

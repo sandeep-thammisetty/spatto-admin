@@ -111,6 +111,7 @@ export function buildSecondCreamLayer({
   const tornHigh = fillSide !== 'above';      // 'below' → torn edge is the TOP edge
 
   const pos = [];
+  const uv = [];
   const idx = [];
 
   // Per angular sample we emit 3 verts: outer-low, outer-high, inner-at-ledge.
@@ -129,6 +130,14 @@ export function buildSecondCreamLayer({
     pos.push(cx * ro, low,  sz * ro);   // 3i + 0  outer low
     pos.push(cx * ro, high, sz * ro);   // 3i + 1  outer high
     pos.push(cx * R,  ledgeY, sz * R);  // 3i + 2  inner ledge (at base wall)
+
+    // UVs: u around the circle (0..1), v up the wall (0..1) — matches the base
+    // wall's cylinder UVs so the SAME tiling cream-grain normal map reads at the
+    // same density on both, and the band stops looking like smooth plastic.
+    const u = i / N;
+    uv.push(u, (low - y0) / wallH);
+    uv.push(u, (high - y0) / wallH);
+    uv.push(u, (ledgeY - y0) / wallH);
   }
 
   for (let i = 0; i < N; i++) {
@@ -144,6 +153,62 @@ export function buildSecondCreamLayer({
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Build the gold-leaf ribbon: a clean, constant-width band straddling the torn edge,
+ * riding a hair proud of the band face. It is deliberately SMOOTH geometry — the
+ * torn-foil irregularity (ragged borders, pinholes, crinkle sparkle) all comes from
+ * the gold-leaf texture's alpha + normal map (see goldLeafTexture.js), not from
+ * jagged vertices. Carries UVs: u tiles `repeat` times around the edge, v 0..1 across
+ * the band. Samples the SAME profile/noise/seed as the band so it sits on the tear.
+ *
+ * @returns {THREE.BufferGeometry}
+ */
+export function buildSecondCreamEdgeLine({
+  R = 1.2,
+  y0 = 0.1,
+  wallH = 1.45,
+  lift = SECOND_CREAM_DEFAULTS.lift,
+  edge,
+  noise = SECOND_CREAM_DEFAULTS.noise,
+  seed = 1,
+  segments = SECOND_CREAM_DEFAULTS.segments,
+  width = 0.09,            // band height the foil texture feathers within
+  repeat = 16,            // gold-leaf tile repeats around the circumference
+} = {}) {
+  const N = Math.max(8, segments | 0);
+  const rr = R + lift + 0.005;   // just proud of the band so the leaf sits on top
+  const prof = sampleProfile(edge, N, noise, seed);
+
+  const pos = [];
+  const uv = [];
+  const idx = [];
+  for (let i = 0; i <= N; i++) {
+    const ii = i % N;
+    const a = (ii / N) * Math.PI * 2;
+    const cx = Math.cos(a);
+    const sz = Math.sin(a);
+    const e = y0 + clamp01(prof[ii]) * wallH;
+    const u = (i / N) * repeat;
+    pos.push(cx * rr, e + width * 0.5, sz * rr);   // 2i + 0  upper rim
+    pos.push(cx * rr, e - width * 0.5, sz * rr);   // 2i + 1  lower rim
+    uv.push(u, 1);
+    uv.push(u, 0);
+  }
+  for (let i = 0; i < N; i++) {
+    const a = i * 2;
+    const b = (i + 1) * 2;
+    idx.push(a, b, b + 1, a, b + 1, a + 1);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
