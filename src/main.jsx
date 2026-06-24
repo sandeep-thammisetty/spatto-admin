@@ -4,6 +4,10 @@ import { supabase } from './lib/supabase.js';
 import Login from './auth/Login.jsx';
 import logo from './images/spattoo-green.png';
 import { getSignedUploadUrl, uploadToR2, createTemplate } from './lib/api.js';
+import { ErrorBoundary } from '@spattoo/designer';
+import { initTelemetry } from './lib/telemetry.js';
+
+initTelemetry();   // bind Sentry to the shared façade before anything renders
 
 const CreateTemplate = lazy(() =>
   import('@spattoo/designer').then(m => ({ default: m.CreateTemplate }))
@@ -349,6 +353,8 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary screen="admin-root">
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );

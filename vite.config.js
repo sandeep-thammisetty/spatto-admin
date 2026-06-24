@@ -1,7 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { sentryVitePlugin } from '@sentry/vite-plugin';
 import fs from 'fs';
 import path from 'path';
+
+// Source-map upload to Sentry runs ONLY when SENTRY_AUTH_TOKEN is set (a build-time
+// secret). Without it the plugin is omitted and the build is unchanged — so local
+// dev/builds never need the token. Set it (+ build) to de-minify admin traces.
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
 
 // Dev-only: accept a POSTed PNG data URL from the Texture Calibrator's "Save snapshot" and write it
 // into .snapshots/ in the project (which tooling can read — unlike ~/Downloads, which macOS blocks).
@@ -30,7 +36,14 @@ function snapshotSaver() {
 }
 
 export default defineConfig({
-  plugins: [react(), snapshotSaver()],
+  plugins: [
+    react(),
+    snapshotSaver(),
+    ...(sentryAuthToken
+      ? [sentryVitePlugin({ org: 'feelingsflavours', project: 'spattoo-admin', authToken: sentryAuthToken })]
+      : []),
+  ],
+  build: { sourcemap: !!sentryAuthToken },   // emit maps only when we'll upload them
   server: { port: 5174 },
   appType: 'spa',
   resolve: {
