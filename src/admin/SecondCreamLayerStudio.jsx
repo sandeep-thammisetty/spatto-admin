@@ -133,6 +133,7 @@ function Scene({ groupRef, autoRotate, paintMode, edge, setEdge, color, cakeColo
 
   return (
     <>
+      <color attach="background" args={['#ffffff']} />
       <ambientLight intensity={0.5} />
       <directionalLight position={[3, 5, 4]} intensity={1.3} />
       <directionalLight position={[-4, 2, -3]} intensity={0.5} />
@@ -144,7 +145,9 @@ function Scene({ groupRef, autoRotate, paintMode, edge, setEdge, color, cakeColo
         <PaintTarget enabled={paintMode} onPaint={paintAt} />
       </group>
       <Spinner enabled={autoRotate} groupRef={groupRef} />
-      <OrbitControls target={[0, 1.2, 0]} makeDefault enablePan enableRotate={!paintMode} />
+      {/* Target the cake centroid (board→top ≈ 0.8) with panning off so it stays screen-centered at
+          any orbit angle — guarantees the cake is centered in screenshots. */}
+      <OrbitControls target={[0, 0.8, 0]} makeDefault enablePan={false} enableRotate={!paintMode} />
     </>
   );
 }
@@ -209,6 +212,15 @@ export default function SecondCreamLayerStudio() {
   const [saveName, setSaveName] = useState('Cream Layer');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+
+  function screenshot() {
+    const canvas = canvasWrapRef.current?.querySelector('canvas');
+    if (!canvas) return;
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = 'second-cream-layer.png';
+    a.click();
+  }
 
   function smooth() {
     setEdge((prev) => {
@@ -343,6 +355,7 @@ export default function SecondCreamLayerStudio() {
           </div>
 
           <button style={S.ghost} onClick={copyJson}>Copy JSON</button>
+          <button style={S.btn} onClick={screenshot}>Screenshot</button>
 
           <div style={{ marginTop: 14, borderTop: '1px solid #E3EAE5', paddingTop: 12 }}>
             <label style={S.label}>Save as Cream Layer element</label>
@@ -360,7 +373,7 @@ export default function SecondCreamLayerStudio() {
         </div>
 
         <div style={{ ...S.card, padding: 0, overflow: 'hidden' }} ref={canvasWrapRef}>
-          <div style={{ height: 600, background: '#E8EDE9', cursor: mode === 'paint' ? 'crosshair' : 'grab' }}>
+          <div style={{ height: 600, background: '#ffffff', cursor: mode === 'paint' ? 'crosshair' : 'grab' }}>
             <Canvas gl={{ preserveDrawingBuffer: true, alpha: true }} camera={{ position: [0, 1.9, 5], fov: 40 }}>
               <Scene
                 groupRef={groupRef}
