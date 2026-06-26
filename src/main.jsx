@@ -41,10 +41,14 @@ const ChocolateDripStudio   = lazy(() => import('./admin/ChocolateDripStudio.jsx
 const SecondCreamLayerStudio = lazy(() => import('./admin/SecondCreamLayerStudio.jsx'));
 const RolesCapabilities     = lazy(() => import('./admin/RolesCapabilities.jsx'));
 const TextureCalibrator     = lazy(() => import('./admin/TextureCalibrator.jsx'));
+const PaletteKnifeStudio    = lazy(() => import('./admin/PaletteKnifeStudio.jsx'));
+const BackgroundRemover     = lazy(() => import('./admin/BackgroundRemover.jsx'));
 const LusterDustStudio      = lazy(() => import('./admin/LusterDustStudio.jsx'));
 const MaterialStyles        = lazy(() => import('./admin/MaterialStyles.jsx'));
 const ROUTES = {
   '/elements/texture-calibrator': TextureCalibrator,
+  '/elements/palette-knife':      PaletteKnifeStudio,
+  '/elements/background-remover': BackgroundRemover,
   '/elements/luster-dust':        LusterDustStudio,
   '/elements/material-styles':    MaterialStyles,
   '/templates/create':    CreateTemplate,
@@ -106,6 +110,8 @@ const NAV_GROUPS = [
     { href: '/elements/piping-calibrator', label: 'Piping Calibrator' },
     { href: '/elements/perch-calibrator',  label: 'Perch Calibrator' },
     { href: '/elements/texture-calibrator', label: 'Texture Calibrator' },
+    { href: '/elements/palette-knife',  label: 'Palette-Knife Studio' },
+    { href: '/elements/background-remover', label: 'Background Remover' },
     { href: '/elements/luster-dust',    label: 'Luster Dust' },
     { href: '/elements/cream-pen',      label: 'Cream Pen' },
     { href: '/elements/freehand-pen',   label: 'Freehand Pen' },
