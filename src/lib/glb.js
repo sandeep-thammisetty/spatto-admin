@@ -102,6 +102,20 @@ export async function measureGlbBuffer(buffer, sizeKB, assetClass) {
   return measureForSave(gltf.scene, sizeKB, assetClass);
 }
 
+// Inverse of toStatColumns: normalize a cake_elements row's GLB stat columns back to the camelCase
+// shape the badges render. Returns null for elements with no recorded stats (e.g. 2D, pre-gate 3D).
+export function statsFromElement(el) {
+  if (!el || (el.tri_count == null && el.decoded_mem_kb == null && el.optimized_size_kb == null)) return null;
+  return {
+    tris:          el.tri_count,
+    textureMaxDim: el.texture_max_dim,
+    decodedMemKB:  el.decoded_mem_kb,
+    sizeKB:        el.optimized_size_kb,
+    assetClass:    el.asset_class,
+    overCap:       el.over_cap,
+  };
+}
+
 // Map the camelCase stats to createGlobalElement's DB field names. The ONE place that mapping lives.
 export function toStatColumns(stats) {
   if (!stats) return {};

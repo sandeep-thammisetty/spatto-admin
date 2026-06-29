@@ -5,7 +5,8 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { fetchElementTypes, fetchParentElements, getSignedUploadUrl, uploadToR2, uploadThumbnail, createGlobalElement, removeBg, suggestElementMeta, suggestCraftGuide, saveCraftGuide } from '../lib/api.js';
 import { normalizeThumbnail } from '../lib/thumbnail.js';
-import { fmtSize, CAPS, toStatColumns } from '../lib/glb.js';
+import { toStatColumns } from '../lib/glb.js';
+import { GlbReviewBanner } from './GlbStats.jsx';
 import GlbStudio from './GlbStudio.jsx';
 import CraftGuideFields, { RANKS } from './CraftGuideFields.jsx';
 
@@ -756,34 +757,12 @@ export default function AddElement() {
           {assetType === '3D' && assetFile && (
             <div style={s.field}>
               {/* Mandatory GLB Studio review — shows the real cost; over-cap is flagged, not blocked. */}
-              <div style={{ marginBottom: 14, padding: '12px 14px', borderRadius: 10,
-                border: `1.5px solid ${optimizedStats ? (optimizedStats.overCap ? '#E0B341' : '#9BCBA5') : '#C5D4C8'}`,
-                background: optimizedStats ? (optimizedStats.overCap ? '#FFF6E5' : '#F0F8F1') : '#F4F8F5' }}>
-                {!optimizedStats ? (
-                  <>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, color: '#2C4433', marginBottom: 6 }}>Review the GLB before saving</div>
-                    <div style={{ fontSize: 11.5, color: '#6B8C74', fontWeight: 600, marginBottom: 10 }}>See its real cost on phones and optimize if needed — required for 3D elements.</div>
-                    <button onClick={() => setGlbStudioFile(assetFile)}
-                      style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: '#3D5A44', color: '#fff', fontFamily: "'Quicksand',sans-serif", fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                      Review & optimize in GLB Studio →
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <span style={{ fontSize: 12.5, fontWeight: 800, color: optimizedStats.overCap ? '#8a6d1a' : '#2E7D32' }}>
-                        {optimizedStats.overCap ? '⚠ Over budget (allowed)' : '✓ Within budget'}
-                      </span>
-                      <button onClick={() => setGlbStudioFile(assetFile)} style={{ background: 'none', border: 'none', color: '#3D5A44', fontWeight: 700, fontSize: 11, cursor: 'pointer', padding: 0 }}>re-open studio</button>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11, fontWeight: 700, color: '#3D5A44' }}>
-                      <span>{fmtSize(optimizedStats.sizeKB)}</span><span style={{ color: '#C5D4C8' }}>·</span>
-                      <span>{optimizedStats.tris.toLocaleString()} tris</span><span style={{ color: '#C5D4C8' }}>·</span>
-                      <span>{fmtSize(optimizedStats.decodedMemKB)} GPU</span><span style={{ color: '#C5D4C8' }}>·</span>
-                      <span>{CAPS[optimizedStats.assetClass]?.label}</span>
-                    </div>
-                  </>
-                )}
+              <div style={{ marginBottom: 14 }}>
+                <GlbReviewBanner
+                  reviewed={optimizedStats ? { stats: optimizedStats } : null}
+                  onReview={() => setGlbStudioFile(assetFile)}
+                  promptText="See its real cost on phones and optimize if needed — required for 3D elements."
+                />
               </div>
               <label style={s.label}>3D Preview</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>

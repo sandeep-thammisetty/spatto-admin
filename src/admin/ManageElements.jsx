@@ -10,6 +10,8 @@ import {
 import { PatternCakeThumb } from './PipingCalibrator.jsx';
 import CraftGuideEditor from './CraftGuideEditor.jsx';
 import { normalizeThumbnail } from '../lib/thumbnail.js';
+import { statsFromElement } from '../lib/glb.js';
+import { GlbStatChips, OverCapBadge } from './GlbStats.jsx';
 
 const CAKE_ZONES = [
   { value: 'top_surface', label: 'Top Surface' },
@@ -390,6 +392,7 @@ export default function ManageElements() {
   const [elements,     setElements]     = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [query,        setQuery]        = useState('');
+  const [overCapOnly,  setOverCapOnly]  = useState(false);   // filter: only elements over their §3 budget
   const [selectedId,   setSelectedId]   = useState(null);
   const [cloneMode,    setCloneMode]    = useState(false);   // "create a NEW element from these settings"
 
@@ -915,12 +918,14 @@ export default function ManageElements() {
 
   // Filter + group elements
   const lowerQuery = query.toLowerCase();
+  const overCapCount = elements.filter(el => el.over_cap).length;
   const grouped = elementTypes
     .map(et => ({
       type: et,
       items: elements.filter(el =>
         el.element_type_id === et.id &&
-        (lowerQuery === '' || (el.name ?? '').toLowerCase().includes(lowerQuery))
+        (lowerQuery === '' || (el.name ?? '').toLowerCase().includes(lowerQuery)) &&
+        (!overCapOnly || el.over_cap)
       ),
     }))
     .filter(g => g.items.length > 0);
@@ -1115,6 +1120,15 @@ export default function ManageElements() {
                 value={query}
                 onChange={e => setQuery(e.target.value)}
               />
+              <button
+                onClick={() => setOverCapOnly(v => !v)}
+                title="Show only elements over their phone-memory budget (§3)"
+                style={{ marginTop: 8, width: '100%', padding: '7px 0', borderRadius: 8, cursor: 'pointer',
+                  border: `1.5px solid ${overCapOnly ? '#E0B341' : '#C5D4C8'}`,
+                  background: overCapOnly ? '#FFF6E5' : '#fff',
+                  color: overCapOnly ? '#8a6d1a' : '#6B8C74', fontFamily: "'Quicksand',sans-serif", fontSize: 12, fontWeight: 700 }}>
+                {overCapOnly ? '⚠ Showing over-budget only' : `⚠ Over budget (${overCapCount})`}
+              </button>
             </div>
             <div style={s.listScroll}>
               {loading && (
@@ -1137,6 +1151,12 @@ export default function ManageElements() {
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={s.elementName}>{el.name}</div>
                         {!el.is_active && <span style={s.inactiveBadge}>Inactive</span>}
+                        {(() => { const st = statsFromElement(el); return st ? (
+                          <div style={{ marginTop: 3 }}>
+                            <OverCapBadge stats={st} />
+                            <GlbStatChips stats={st} style={{ marginTop: 3, fontSize: 10 }} />
+                          </div>
+                        ) : null; })()}
                       </div>
                     </div>
                   ))}

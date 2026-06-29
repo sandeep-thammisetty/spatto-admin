@@ -8,7 +8,8 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { toCreasedNormals, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MeshoptSimplifier } from 'meshoptimizer/simplifier';
 import { fetchElementTypes, getSignedUploadUrl, uploadToR2, uploadThumbnail, createGlobalElement, removeBg } from '../lib/api.js';
-import { measureGlbRoot, evaluateCaps, deriveAssetClass, measureForSave, toStatColumns, fmtSize, ASSET_CLASSES, CAPS } from '../lib/glb.js';
+import { measureGlbRoot, evaluateCaps, deriveAssetClass, measureForSave, toStatColumns, ASSET_CLASSES, CAPS } from '../lib/glb.js';
+import { GlbBudgetRows } from './GlbStats.jsx';
 
 // GLB Studio — import one or more GLBs as "pieces", position them with a gizmo,
 // group their meshes into named recolorable PARTS, optimize, and export/save a
@@ -1173,31 +1174,7 @@ export default function GlbStudio({ initialFile = null, onUse = null } = {}) {
                     {ASSET_CLASSES.map(c => <option key={c} value={c}>{CAPS[c].label}{c === suggestedClass ? ' (suggested)' : ''}</option>)}
                   </select>
                 </div>
-                {capEval ? (
-                  <>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {capEval.rows.map(r => {
-                        const show = (v) => r.unit === 'KB' ? fmtSize(v) : r.unit === 'px' ? `${v}px` : v.toLocaleString();
-                        return (
-                          <div key={r.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: r.over ? '#FFF0F0' : '#F4F8F5', borderRadius: 8, padding: '7px 10px' }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: '#2C4433' }}>{r.label}</span>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: r.over ? '#C0392B' : '#3D5A44' }}>
-                              {show(r.value)} <span style={{ color: '#9BB5A2', fontWeight: 600 }}>/ {show(r.cap)}{r.over ? ' ⚠' : ''}</span>
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, fontSize: 11.5, fontWeight: 700,
-                      background: capEval.anyOver ? '#FFF6E5' : '#E8F5E9', color: capEval.anyOver ? '#8a6d1a' : '#2E7D32' }}>
-                      {capEval.anyOver
-                        ? `Over the ${capEval.capLabel} budget on phones. Optimize below, or keep it if this piece truly needs the detail — it's allowed, just flagged.`
-                        : `Within the ${capEval.capLabel} budget. Good to go.`}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: 11, color: '#9BB5A2', fontWeight: 600 }}>Measuring…</div>
-                )}
+                <GlbBudgetRows capEval={capEval} />
               </div>
             )}
             {root && (

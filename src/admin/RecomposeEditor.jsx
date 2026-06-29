@@ -6,7 +6,8 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 import { fetchElementTypes, getSignedUploadUrl, uploadToR2, uploadThumbnail, createGlobalElement, removeBg } from '../lib/api.js';
-import { toStatColumns, fmtSize, CAPS } from '../lib/glb.js';
+import { toStatColumns } from '../lib/glb.js';
+import { GlbReviewBanner } from './GlbStats.jsx';
 import GlbStudio from './GlbStudio.jsx';
 import { ZONE_LIST as ZONES } from '../lib/constants.js';
 import { loader, parseGLB, bakeAndWeldGeo, simplifyWeldedGeo, deriveFaceData, kmeans, clusterConnected, floodFillFaces, brushFaces, boundaryEdges, buildTexturedScene } from './glbRecomposeCore.js';
@@ -870,31 +871,16 @@ const RecomposeEditor = forwardRef(function RecomposeEditor({
                     </div>
                   </div>
                   {/* Mandatory GLB Studio pass before creation — shows the real cost; over-cap is flagged. */}
-                  <div style={{ padding: '12px 14px', borderRadius: 10,
-                    border: `1.5px solid ${reviewed ? (reviewed.stats.overCap ? '#E0B341' : '#9BCBA5') : '#C5D4C8'}`,
-                    background: reviewed ? (reviewed.stats.overCap ? '#FFF6E5' : '#F0F8F1') : '#F4F8F5' }}>
-                    {!reviewed ? (
-                      <>
-                        <div style={{ fontSize: 12.5, fontWeight: 700, color: '#2C4433', marginBottom: 6 }}>Review the recomposed GLB before saving</div>
-                        <div style={{ fontSize: 11.5, color: '#6B8C74', fontWeight: 600, marginBottom: 10 }}>See its real cost on phones and optimize if needed — required before creating the element.</div>
-                        <button style={S.exportBtn(busy || !geo)} onClick={openStudioReview} disabled={busy || !geo}>{busy ? 'Preparing…' : 'Review & optimize in GLB Studio →'}</button>
-                      </>
-                    ) : (
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 800, color: reviewed.stats.overCap ? '#8a6d1a' : '#2E7D32' }}>{reviewed.stats.overCap ? '⚠ Over budget (allowed)' : '✓ Within budget'}</span>
-                          <button onClick={openStudioReview} style={{ background: 'none', border: 'none', color: '#3D5A44', fontWeight: 700, fontSize: 11, cursor: 'pointer', padding: 0 }}>re-open studio</button>
-                        </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11, fontWeight: 700, color: '#3D5A44', marginBottom: 10 }}>
-                          <span>{fmtSize(reviewed.stats.sizeKB)}</span><span style={{ color: '#C5D4C8' }}>·</span>
-                          <span>{reviewed.stats.tris.toLocaleString()} tris</span><span style={{ color: '#C5D4C8' }}>·</span>
-                          <span>{fmtSize(reviewed.stats.decodedMemKB)} GPU</span><span style={{ color: '#C5D4C8' }}>·</span>
-                          <span>{CAPS[reviewed.stats.assetClass]?.label}</span>
-                        </div>
-                        <button style={S.exportBtn(busy)} onClick={handleSaveElement} disabled={busy}>{busy ? 'Working…' : 'Save as Element'}</button>
-                      </>
-                    )}
-                  </div>
+                  <GlbReviewBanner
+                    reviewed={reviewed}
+                    busy={busy}
+                    disabled={!geo}
+                    onReview={openStudioReview}
+                    title="Review the recomposed GLB before saving"
+                    promptText="See its real cost on phones and optimize if needed — required before creating the element."
+                  >
+                    <button style={S.exportBtn(busy)} onClick={handleSaveElement} disabled={busy}>{busy ? 'Working…' : 'Save as Element'}</button>
+                  </GlbReviewBanner>
                   {saveMsg && <div style={saveMsg.ok ? { ...S.err, background: '#E8F5E9', color: '#2E7D32' } : S.err}>{saveMsg.text}</div>}
                 </div>
               </div>
