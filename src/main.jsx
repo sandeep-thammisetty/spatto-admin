@@ -45,12 +45,14 @@ const PaletteKnifeStudio    = lazy(() => import('./admin/PaletteKnifeStudio.jsx'
 const BackgroundRemover     = lazy(() => import('./admin/BackgroundRemover.jsx'));
 const LusterDustStudio      = lazy(() => import('./admin/LusterDustStudio.jsx'));
 const MaterialStyles        = lazy(() => import('./admin/MaterialStyles.jsx'));
+const ReliefStickerStudio   = lazy(() => import('./admin/ReliefStickerStudio.jsx'));
 const ROUTES = {
   '/elements/texture-calibrator': TextureCalibrator,
   '/elements/palette-knife':      PaletteKnifeStudio,
   '/elements/background-remover': BackgroundRemover,
   '/elements/luster-dust':        LusterDustStudio,
   '/elements/material-styles':    MaterialStyles,
+  '/elements/relief-sticker':     ReliefStickerStudio,
   '/templates/create':    CreateTemplate,
   '/templates/design':    DesignTemplate,
   '/templates':           ManageTemplates,
