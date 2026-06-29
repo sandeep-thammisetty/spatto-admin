@@ -19,10 +19,10 @@ export function encodeWebp(blob, quality = 0.9) {
 }
 
 // Crop a captured thumbnail to its non-transparent bounds and scale to fill ~80% of a 512² frame,
-// so element thumbnails frame consistently regardless of how the 3D capture was composed. Output is
-// WebP (alpha preserved) — the master thumbnail is now WebP end-to-end, no PNG accumulates on R2.
+// so element thumbnails frame consistently regardless of how the 3D capture was composed. Output is a
+// square WebP at `size` px (alpha preserved) — the master is WebP end-to-end, no PNG accumulates on R2.
 // Shared by AddElement, the Piping Calibrator (pattern creation) and Manage Elements (regenerate).
-export function normalizeThumbnail(blob) {
+export function normalizeThumbnail(blob, size = 512) {
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => {
@@ -40,7 +40,7 @@ export function normalizeThumbnail(blob) {
           }
         }
       }
-      const OUT = 512, FILL = 0.8;
+      const OUT = size, FILL = 0.8;
       const out = document.createElement('canvas');
       out.width = OUT; out.height = OUT;
       const oCtx = out.getContext('2d');

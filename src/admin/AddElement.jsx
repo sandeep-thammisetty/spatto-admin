@@ -3,8 +3,9 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF, Environment } from '@react-three/drei';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { fetchElementTypes, fetchParentElements, getSignedUploadUrl, uploadToR2, uploadThumbnail, createGlobalElement, removeBg, suggestElementMeta, suggestCraftGuide, saveCraftGuide } from '../lib/api.js';
+import { fetchElementTypes, fetchParentElements, uploadThumbnail, uploadAsset, createGlobalElement, suggestElementMeta, suggestCraftGuide, saveCraftGuide } from '../lib/api.js';
 import { normalizeThumbnail } from '../lib/thumbnail.js';
+import { prepareElementImage } from '../lib/elementImage.js';
 import { toStatColumns } from '../lib/glb.js';
 import { GlbReviewBanner } from './GlbStats.jsx';
 import GlbStudio from './GlbStudio.jsx';
@@ -354,14 +355,11 @@ export default function AddElement() {
     setRemovingBg(true);
     setThumbnailBlob(null);
     try {
-      // Skip remove.bg when disabled (the asset's alpha is already authored, e.g. a photo frame).
-      const processed   = removeBgEnabled ? await removeBg(blob) : blob;
-      const normalized  = await normalizeThumbnail(processed);
-      setThumbnailBlob(normalized);
+      // Shared 2D pipeline: bg-remove (unless disabled — e.g. photo frames carry authored alpha) +
+      // normalize. The result is the element's master image (image_url) AND thumbnail_url.
+      setThumbnailBlob(await prepareElementImage(blob, { removeBgEnabled }));
     } catch {
-      // Fall back to original if remove.bg fails; still normalize
-      const normalized = await normalizeThumbnail(blob);
-      setThumbnailBlob(normalized);
+      setThumbnailBlob(await normalizeThumbnail(blob, 1024));
     } finally {
       setRemovingBg(false);
     }
@@ -494,21 +492,15 @@ export default function AddElement() {
       // without a background). With remove-bg OFF, upload the ORIGINAL file untouched + un-cropped —
       // its authored alpha must survive intact (e.g. a photo-frame overlay that must stay aligned to
       // its window mask).
-      const raw2D = assetType === '2D' && !removeBgEnabled;
       let assetKey = null;
       let assetSize = null;
       if (needsFile) {
         const folder = ASSET_TYPES.find(a => a.value === assetType).folder;
+        // With remove-bg ON we upload the bg-removed + normalized blob (WebP); OFF we upload the
+        // ORIGINAL file untouched so authored alpha survives (e.g. a photo-frame overlay + its mask).
+        // uploadAsset derives the extension + Content-Type from the blob/file so they always agree.
         const fileToUpload = (assetType === '2D' && removeBgEnabled && thumbnailBlob) ? thumbnailBlob : assetFile;
-        const ext = assetType === '3D' ? assetFile.name.split('.').pop()
-                  : raw2D ? (assetFile.name.split('.').pop() || 'png') : 'png';
-        const assetFilename = `${crypto.randomUUID()}.${ext}`;
-        const assetContentType = assetType === '3D' ? (assetFile.type || 'model/gltf-binary')
-                  : raw2D ? (assetFile.type || 'image/png') : 'image/png';
-        const { url: assetUrl, key } = await getSignedUploadUrl(folder, assetFilename, assetContentType);
-        await uploadToR2(assetUrl, fileToUpload);
-        assetKey = key;
-        // Record the byte size of what we actually uploaded (bg-removed PNG for 2D).
+        assetKey = await uploadAsset(folder, fileToUpload);
         assetSize = fileToUpload.size ?? null;
       }
 
@@ -519,10 +511,7 @@ export default function AddElement() {
       // into placement_config.photo.mask below. Uploaded raw (no bg-removal — the alpha IS the mask).
       let maskKey = null;
       if (assetType === '2D' && isPhotoFrame && maskFile) {
-        const maskFilename = `${crypto.randomUUID()}.png`;
-        const { url: maskUrl, key } = await getSignedUploadUrl('elements/files/2D', maskFilename, 'image/png');
-        await uploadToR2(maskUrl, maskFile);
-        maskKey = key;
+        maskKey = await uploadAsset('elements/files/2D', maskFile);
       }
 
       let builtPlacementConfig = {};

@@ -5,11 +5,12 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   fetchAdminElementTypes, fetchAllElements, fetchParentElements,
-  getSignedUploadUrl, uploadToR2, uploadThumbnail, updateGlobalElement, createGlobalElement, removeBg, deleteR2Object,
+  uploadThumbnail, uploadAsset, updateGlobalElement, createGlobalElement, deleteR2Object,
 } from '../lib/api.js';
 import { PatternCakeThumb } from './PipingCalibrator.jsx';
 import CraftGuideEditor from './CraftGuideEditor.jsx';
 import { normalizeThumbnail } from '../lib/thumbnail.js';
+import { prepareElementImage } from '../lib/elementImage.js';
 import { statsFromElement } from '../lib/glb.js';
 import { GlbStatChips, OverCapBadge } from './GlbStats.jsx';
 
@@ -566,11 +567,11 @@ export default function ManageElements() {
     setRemovingBg(true);
     setNewThumbBlob(null);
     try {
-      // Skip remove.bg when disabled (the image's alpha is already authored, e.g. a photo frame).
-      const processed = enabled ? await removeBg(blob) : blob;
-      setNewThumbBlob(processed);
+      // Same shared 2D pipeline as AddElement: bg-remove (unless disabled) + normalize. Used as the
+      // thumbnail AND (for 2D + remove-bg) the replacement asset, so the sticker comes out transparent.
+      setNewThumbBlob(await prepareElementImage(blob, { removeBgEnabled: enabled }));
     } catch {
-      setNewThumbBlob(blob);
+      setNewThumbBlob(await normalizeThumbnail(blob, 1024));
     } finally {
       setRemovingBg(false);
     }
@@ -764,20 +765,17 @@ export default function ManageElements() {
   // Save only persists a DELIBERATE thumbnail change (the "Save + Thumbnail" button or a manual one).
   async function uploadStagedAssets(fields, parsedConfig, forceThumb) {
     if (newAssetFile) {
-      const ext = newAssetFile.name.split('.').pop();
-      const folder = /\.(glb|gltf)$/i.test(newAssetFile.name) ? 'elements/files/3D' : 'elements/files/2D';
-      const filename = `${crypto.randomUUID()}.${ext}`;
-      const contentType = newAssetFile.type || (folder.includes('3D') ? 'model/gltf-binary' : 'image/png');
-      const { url, key } = await getSignedUploadUrl(folder, filename, contentType);
-      await uploadToR2(url, newAssetFile);
-      fields.image_url = key;
-      fields.file_size = newAssetFile.size ?? null;
+      const isGlb = /\.(glb|gltf)$/i.test(newAssetFile.name);
+      const folder = isGlb ? 'elements/files/3D' : 'elements/files/2D';
+      // 2D + remove-bg: store the bg-removed + normalized image (the same blob shown as the thumbnail)
+      // as the asset, so the sticker is transparent and matches AddElement. GLB or remove-bg-off keeps
+      // the raw file (authored alpha must survive untouched, e.g. a photo-frame overlay).
+      const assetSrc = (!isGlb && removeBgEnabled && newThumbBlob) ? newThumbBlob : newAssetFile;
+      fields.image_url = await uploadAsset(folder, assetSrc);
+      fields.file_size = assetSrc.size ?? null;
     }
     if (altAssetFile) {
-      const ext = altAssetFile.name.split('.').pop();
-      const filename = `${crypto.randomUUID()}.${ext}`;
-      const { url, key } = await getSignedUploadUrl('elements/files/3D', filename, altAssetFile.type || 'model/gltf-binary');
-      await uploadToR2(url, altAssetFile);
+      const key = await uploadAsset('elements/files/3D', altAssetFile);
       parsedConfig.bottom_alt_glb_url = key;
       parsedConfig.top_alt_glb_url    = key;
       fields.placement_config = parsedConfig;

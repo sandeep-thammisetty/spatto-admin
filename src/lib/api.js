@@ -109,13 +109,31 @@ export async function deleteR2Object(key) {
   return post('/api/storage/delete', { key });
 }
 
-export async function uploadToR2(signedUrl, file) {
+// `contentType` defaults to the blob/file's own type, but callers can override it so the PUT header
+// matches the type the presigned URL was signed with (a File from <input> can have an empty .type).
+export async function uploadToR2(signedUrl, file, contentType) {
   const res = await fetch(signedUrl, {
     method: 'PUT',
-    headers: { 'Content-Type': file.type },
+    headers: { 'Content-Type': contentType || file.type },
     body: file,
   });
   if (!res.ok) throw new Error('Upload to R2 failed');
+}
+
+// Store a MASTER asset (GLB or 2D image) in R2 under `folder` and return its key. Unlike
+// uploadThumbnail it does NOT transcode — assets keep their authored format — but it derives the
+// extension AND Content-Type from one source so the signed type, the sent type, and the stored
+// object always agree (a canvas/remove-bg Blob has a reliable .type; a File from <input> may have an
+// empty .type, so we fall back to its filename extension). The ONE place asset uploads pick format.
+const MIME_BY_EXT = { glb: 'model/gltf-binary', gltf: 'model/gltf-binary', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml' };
+const EXT_BY_MIME = { 'model/gltf-binary': 'glb', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+export async function uploadAsset(folder, file, basename = crypto.randomUUID()) {
+  const nameExt = (file.name?.split('.').pop() || '').toLowerCase();
+  const contentType = file.type || MIME_BY_EXT[nameExt] || 'application/octet-stream';
+  const ext = EXT_BY_MIME[contentType] || nameExt || 'bin';
+  const { url, key } = await getSignedUploadUrl(folder, `${basename}.${ext}`, contentType);
+  await uploadToR2(url, file, contentType);
+  return key;
 }
 
 // Store an image blob as a WebP thumbnail in R2 under `folder` and return its key.
