@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { createBaker, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
 
-const TIERS = ['trial', 'starter', 'pro', 'enterprise'];
+// Note: no subscription/tier picker here — every baker starts on the one-time Spark trial
+// automatically (api bakerProvisioning). Plan changes happen in the Baker Subscriptions screen.
 
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -16,8 +17,6 @@ const EMPTY_FORM = {
   website_url: '',
   primary_color: '#3D5A44',
   accent_color: '#C5D4C8',
-  subscription_tier: 'trial',
-  trial_ends_at: '',
   currency_code: 'INR',
   timezone: 'Asia/Kolkata',
   user_first_name: '',
@@ -52,9 +51,6 @@ export default function OnboardBaker() {
     setError(null);
     try {
       const { user_first_name, user_last_name, user_email, user_phone, user_whatsapp, ...baker } = form;
-      if (baker.subscription_tier !== 'trial' || !baker.trial_ends_at) {
-        delete baker.trial_ends_at;
-      }
 
       if (logoFile) {
         const ext = logoFile.name.split('.').pop();
@@ -310,40 +306,6 @@ export default function OnboardBaker() {
             </button>
           )}
 
-          {/* ── Subscription ── */}
-          <div style={{ ...s.sectionLabel, marginTop: 20 }}>Subscription</div>
-
-          <label style={s.label}>Tier</label>
-          <div style={s.tierRow}>
-            {TIERS.map(t => (
-              <button
-                key={t}
-                type="button"
-                style={{
-                  ...s.tierBtn,
-                  background:  form.subscription_tier === t ? '#3D5A44' : '#fff',
-                  color:       form.subscription_tier === t ? '#fff' : '#3D5A44',
-                  borderColor: form.subscription_tier === t ? '#3D5A44' : '#C5D4C8',
-                }}
-                onClick={() => set('subscription_tier', t)}
-              >
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {form.subscription_tier === 'trial' && (
-            <>
-              <label style={s.label}>Trial ends</label>
-              <input
-                style={s.input}
-                type="date"
-                value={form.trial_ends_at}
-                onChange={e => set('trial_ends_at', e.target.value)}
-              />
-            </>
-          )}
-
           {/* ── Locale ── */}
           <div style={{ ...s.sectionLabel, marginTop: 20 }}>Locale</div>
 
@@ -427,12 +389,6 @@ const s = {
   colorSwatch: {
     width: 36, height: 36, border: '1.5px solid #C5D4C8',
     borderRadius: 8, cursor: 'pointer', padding: 2, background: 'none',
-  },
-  tierRow: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 },
-  tierBtn: {
-    padding: '7px 16px', border: '1.5px solid', borderRadius: 20,
-    fontSize: 12, fontWeight: 700, cursor: 'pointer',
-    fontFamily: 'Quicksand, sans-serif', transition: 'all 0.15s',
   },
   errorMsg: {
     background: '#FFF0F0', border: '1.5px solid #F5C0C0',
