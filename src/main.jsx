@@ -46,7 +46,9 @@ const BackgroundRemover     = lazy(() => import('./admin/BackgroundRemover.jsx')
 const LusterDustStudio      = lazy(() => import('./admin/LusterDustStudio.jsx'));
 const MaterialStyles        = lazy(() => import('./admin/MaterialStyles.jsx'));
 const ReliefStickerStudio   = lazy(() => import('./admin/ReliefStickerStudio.jsx'));
+const EditorsIndex          = lazy(() => import('./admin/EditorsIndex.jsx'));
 const ROUTES = {
+  '/editors':                     EditorsIndex,
   '/elements/texture-calibrator': TextureCalibrator,
   '/elements/palette-knife':      PaletteKnifeStudio,
   '/elements/background-remover': BackgroundRemover,
@@ -102,7 +104,7 @@ const NAV_GROUPS = [
     { href: '/elements/types',  label: 'Element Types' },
     { href: '/elements/material-styles', label: 'Material → Styles' },
   ] },
-  { title: 'Editors', items: [
+  { title: 'Editors', index: '/editors', items: [
     { href: '/elements/build-from-inspiration', label: 'Build from Inspiration' },
     { href: '/elements/image-to-3d',    label: 'Image → 3D Cake' },
     { href: '/elements/generate',       label: 'Generate Shape' },
@@ -121,6 +123,7 @@ const NAV_GROUPS = [
     { href: '/elements/second-cream-layer', label: 'Second Cream Layer' },
     { href: '/elements/folded-sticker', label: 'Folded Butterfly' },
     { href: '/elements/photo-frame',    label: 'Photo Frame Studio' },
+    { href: '/elements/relief-sticker', label: 'Relief Sticker Studio' },
     { href: '/elements/recolor-tester', label: 'Recolour Tester' },
     { href: '/pattern-builder',         label: 'Pattern Builder' },
   ] },
@@ -155,8 +158,25 @@ function NavMenu() {
   return (
     <nav ref={navRef} style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
       {NAV_GROUPS.map(g => {
-        const active = g.items.some(it => it.href === path);
+        const active = g.items.some(it => it.href === path) || g.index === path;
         const isOpen = open === g.title;
+        // Large groups (e.g. Editors) link to a tiles index page instead of a flyout —
+        // the dropdown got unwieldy as the tool count grew.
+        if (g.index) {
+          return (
+            <a key={g.title} href={g.index}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                background: active ? '#F4F8F5' : 'transparent',
+                border: '1.5px solid', borderColor: active ? '#C5D4C8' : 'transparent',
+                borderRadius: 8, padding: '6px 12px', cursor: 'pointer', textDecoration: 'none',
+                fontFamily: "'Quicksand', sans-serif", fontSize: 13,
+                fontWeight: 700, color: active ? '#2C4433' : '#5C7565',
+              }}>
+              {g.title}
+            </a>
+          );
+        }
         return (
           <div key={g.title} style={{ position: 'relative' }}>
             <button
@@ -310,6 +330,11 @@ function Router({ session }) {
 
   if (Screen) {
     const extraProps = {};
+
+    // The Editors tiles page renders from the same NAV_GROUPS list (single source of truth).
+    if (path === '/editors') {
+      extraProps.items = NAV_GROUPS.find(g => g.title === 'Editors')?.items ?? [];
+    }
 
     if (path === '/templates/create') {
       extraProps.onSave = async ({ name, tierCount, designJson, thumbnailBlob }) => {
