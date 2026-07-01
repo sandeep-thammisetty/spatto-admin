@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isValidPhoneNumber, getCountries, getCountryCallingCode } from 'libphonenumber-js';
 import { createBaker, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
 
 // Note: no subscription/tier picker here — every baker starts on the one-time Spark trial
@@ -7,6 +8,13 @@ import { createBaker, getSignedUploadUrl, uploadToR2 } from '../lib/api.js';
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
+
+// Full ISO-3166 country list (from libphonenumber-js) for the phone-region select —
+// international-ready from day one. Names via Intl.DisplayNames; sorted A→Z.
+const REGION_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
+const COUNTRY_OPTIONS = getCountries()
+  .map(code => ({ code, calling: getCountryCallingCode(code), name: REGION_NAMES.of(code) || code }))
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 const EMPTY_FORM = {
   name: '',
@@ -22,6 +30,7 @@ const EMPTY_FORM = {
   user_first_name: '',
   user_last_name: '',
   user_email: '',
+  user_phone_country: 'IN',
   user_phone: '',
   user_whatsapp: '',
 };
@@ -32,6 +41,7 @@ export default function OnboardBaker() {
   const [slugManual, setSlugManual] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [fieldErr, setFieldErr] = useState({});
   const [result, setResult] = useState(null);
   const [copied, setCopied] = useState(false);
 
@@ -47,10 +57,20 @@ export default function OnboardBaker() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setSaving(true);
     setError(null);
+
+    // Phone required + valid (E.164 for form.user_phone_country); WhatsApp valid if given.
+    // Server re-validates + enforces one-phone-per-baker; this is just fast UX.
+    const fe = {};
+    if (!form.user_phone.trim()) fe.phone = 'Phone is required';
+    else if (!isValidPhoneNumber(form.user_phone, form.user_phone_country)) fe.phone = 'Enter a valid phone number';
+    if (form.user_whatsapp.trim() && !isValidPhoneNumber(form.user_whatsapp, form.user_phone_country)) fe.whatsapp = 'Enter a valid WhatsApp number';
+    setFieldErr(fe);
+    if (Object.keys(fe).length) return;
+
+    setSaving(true);
     try {
-      const { user_first_name, user_last_name, user_email, user_phone, user_whatsapp, ...baker } = form;
+      const { user_first_name, user_last_name, user_email, user_phone_country, user_phone, user_whatsapp, ...baker } = form;
 
       if (logoFile) {
         const ext = logoFile.name.split('.').pop();
@@ -66,13 +86,16 @@ export default function OnboardBaker() {
           first_name:      user_first_name,
           last_name:       user_last_name,
           email:           user_email,
-          phone:           user_phone || null,
+          phone:           user_phone,
+          phone_country:   user_phone_country,
           whatsapp_number: user_whatsapp || null,
         },
       });
       setResult(data);
     } catch (err) {
-      setError(err.message);
+      // A phone-uniqueness conflict (409) reads best under the phone field.
+      if (/phone/i.test(err.message)) setFieldErr({ phone: err.message });
+      else setError(err.message);
     } finally {
       setSaving(false);
     }
@@ -195,26 +218,40 @@ export default function OnboardBaker() {
             required
           />
 
+          <label style={s.label}>Country <span style={s.hint}>region for phone numbers</span></label>
+          <select
+            style={s.input}
+            value={form.user_phone_country}
+            onChange={e => set('user_phone_country', e.target.value)}
+          >
+            {COUNTRY_OPTIONS.map(c => (
+              <option key={c.code} value={c.code}>{c.name} (+{c.calling})</option>
+            ))}
+          </select>
+
           <div style={s.twoCol}>
             <div>
-              <label style={s.label}>Phone</label>
+              <label style={s.label}>Phone *</label>
               <input
-                style={s.input}
+                style={{ ...s.input, ...(fieldErr.phone ? s.inputError : null) }}
                 type="tel"
                 value={form.user_phone}
                 onChange={e => set('user_phone', e.target.value)}
-                placeholder="+91 98765 43210"
+                placeholder="98765 43210"
+                required
               />
+              {fieldErr.phone && <div style={s.fieldError}>{fieldErr.phone}</div>}
             </div>
             <div>
               <label style={s.label}>WhatsApp</label>
               <input
-                style={s.input}
+                style={{ ...s.input, ...(fieldErr.whatsapp ? s.inputError : null) }}
                 type="tel"
                 value={form.user_whatsapp}
                 onChange={e => set('user_whatsapp', e.target.value)}
-                placeholder="+91 98765 43210"
+                placeholder="98765 43210"
               />
+              {fieldErr.whatsapp && <div style={s.fieldError}>{fieldErr.whatsapp}</div>}
             </div>
           </div>
 
@@ -395,6 +432,8 @@ const s = {
     borderRadius: 8, padding: '10px 14px',
     color: '#C0392B', fontSize: 12, fontWeight: 600, marginTop: 8,
   },
+  inputError:  { borderColor: '#E39B9B', background: '#FFF7F7' },
+  fieldError:  { fontSize: 11, fontWeight: 600, color: '#C0392B', marginTop: 4 },
   submitBtn: {
     marginTop: 20, padding: '13px',
     background: '#3D5A44', color: '#fff',
